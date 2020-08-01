@@ -255,11 +255,15 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
     written=write(dumpfd, ppm_header, sizeof(ppm_header));
 
     total=0;
-
+    syslog(LOG_CRIT,"Before do while");
     do
     {
+        syslog(LOG_CRIT,"Size value = %d", size);
         written=write(dumpfd, p, size);
+        syslog(LOG_CRIT,"Written value = %d", written);
         total+=written;
+        syslog(LOG_CRIT,"Total value = %d", total);
+        syslog(LOG_CRIT,"Inside do while");
     } while(total < size);
 
     printf("wrote %d bytes\n", total);
@@ -969,7 +973,7 @@ long_options[] = {
         { "count",  required_argument, NULL, 'c' },
         { 0, 0, 0, 0 }
 };
-static unsigned long long S2Cnt=0;
+
 void *Sequencer(void *threadp)
 {
     struct timeval current_time_val;
@@ -1037,7 +1041,7 @@ void *Sequencer(void *threadp)
         gettimeofday(&current_time_val, (struct timezone *)0);
         syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
-    } while(!abortTest && (seqCnt <= frame_count));
+    } while(!abortTest && (seqCnt < (frame_count)));
 
     syslog(LOG_CRIT, "Outside sequencer while");
     sem_post(&semS1); 
@@ -1068,13 +1072,13 @@ void *Service_1(void *threadp)
         syslog(LOG_CRIT, "Inside while");
         //if(!abortS1)
         //{
-            syslog(LOG_CRIT, "Inside If S1Cnt");
-            syslog(LOG_CRIT, "Taking sem");
+            //syslog(LOG_CRIT, "Inside If S1Cnt");
+           // syslog(LOG_CRIT, "Taking sem");
         sem_wait(&semS1);
         //printf("-----------------S2Count = %d\n",S2Cnt);
-        syslog(LOG_CRIT, "Entering mainloop");
+        //syslog(LOG_CRIT, "Entering mainloop");
         mainloop();
-        syslog(LOG_CRIT, "Incrementing S1Cnt");
+        //syslog(LOG_CRIT, "Incrementing S1Cnt");
         S1Cnt++;
 
         gettimeofday(&current_time_val, (struct timezone *)0);
@@ -1090,7 +1094,7 @@ void *Service_2(void *threadp)
 {
     struct timeval current_time_val;
     double current_time;
-    //unsigned long long S2Cnt=0;
+    unsigned long long S2Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
 
     gettimeofday(&current_time_val, (struct timezone *)0);
@@ -1098,27 +1102,21 @@ void *Service_2(void *threadp)
     printf("Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
     //while(!abortS2)S2Cnt <= (frame_count+1)
-    while(!abortS2)
+    while(S2Cnt < (frame_count) && !abortS2)
     {
-        
+        syslog(LOG_CRIT, "Take sema for = %d", S2Cnt);
         sem_wait(&semS2);
         syslog(LOG_CRIT, "S2Cnt inside while = %d", S2Cnt);
         syslog(LOG_CRIT, "Frame captured = %d",frame_captured);
-        if(S2Cnt == frame_count-1)
-        {
-          //  S2Cnt++;
-            break;
-        }
         if(S2Cnt == 0 && frame_captured == true)
         {
             dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
             syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
             S2Cnt++;        
         }
-        //if(frame_captured == true)
-        else
+        else if(S2Cnt != 0)
         {
-            dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
+            dump_ppm(image_frame[(S2Cnt+1)%frame_count], global_size, (S2Cnt+1), &global_frame_time);
             syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
             S2Cnt++;        
         }
@@ -1157,63 +1155,6 @@ int main(int argc, char **argv)
     printf("\Nodename - %s",hostname.nodename);
     printf("\nMachine name - %s",hostname.machine);
     printf("\nSystem name - %s\n",hostname.sysname);
-
-    for (;;)
-    {
-        int idx;
-        int c;
-
-        c = getopt_long(argc, argv,
-                    short_options, long_options, &idx);
-
-        if (-1 == c)
-            break;
-
-        switch (c)
-        {
-            case 0: /* getopt_long() flag */
-                break;
-
-            case 'd':
-                dev_name = optarg;
-                break;
-
-            case 'h':
-                usage(stdout, argc, argv);
-                exit(EXIT_SUCCESS);
-
-            case 'm':
-                io = IO_METHOD_MMAP;
-                break;
-
-            case 'r':
-                io = IO_METHOD_READ;
-                break;
-
-            case 'u':
-                io = IO_METHOD_USERPTR;
-                break;
-
-            case 'o':
-                out_buf++;
-                break;
-
-            case 'f':
-                force_format++;
-                break;
-
-            case 'c':
-                errno = 0;
-                frame_count = strtol(optarg, NULL, 0);
-                if (errno)
-                        errno_exit(optarg);
-                break;
-
-            default:
-                usage(stderr, argc, argv);
-                exit(EXIT_FAILURE);
-        }
-    }
     
     printf("Starting Sequencer Demo\n");
     gettimeofday(&start_time_val, (struct timezone *)0);
