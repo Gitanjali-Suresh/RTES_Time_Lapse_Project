@@ -89,7 +89,7 @@ struct buffer          *buffers;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 60;
+int              frame_count = 181;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
@@ -262,6 +262,7 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
     system(timestamp_call);
     close(dumpfd);
     frame_captured = false;
+    syslog(LOG_CRIT, "In PPM DUMP Frame captured = %d",frame_captured);
     
     //}
     
@@ -361,7 +362,7 @@ void yuv2rgb(int y, int u, int v, unsigned char *r, unsigned char *g, unsigned c
 
 unsigned int framecnt=0;
 unsigned char bigbuffer[(1280*960)];
-unsigned char image_frame[60][(1280*960)];
+unsigned char image_frame[181][(1280*960)];
 int global_size;
 struct timespec global_frame_time;
 
@@ -373,8 +374,8 @@ static void process_image(const void *p, int size)
     int y_temp, y2_temp, u_temp, v_temp;
     unsigned char *pptr = (unsigned char *)p;
     
-    //if(frame_captured == false)
-    //{
+    if(!abortS1)
+        {
 
     // record when process was called
     clock_gettime(CLOCK_REALTIME, &frame_time);    
@@ -412,8 +413,10 @@ static void process_image(const void *p, int size)
         global_size = (size*6)/4;
         global_frame_time = frame_time;
         frame_captured = true;
+        syslog(LOG_CRIT, "In process image Frame captured = %d",frame_captured);
         for(i = 0;i < (1280*960);i++)
-            image_frame[framecnt][i] = bigbuffer[i];
+            image_frame[(framecnt % frame_count)][i] = bigbuffer[i];
+        printf("Image Frame No. = %d\n",(framecnt % frame_count));
 #else
         printf("Dump YUYV converted to YY size %d\n", size);
        
@@ -448,7 +451,7 @@ static void process_image(const void *p, int size)
     //fprintf(stderr, ".");
     fflush(stdout);
     
-    // }
+     }
 }
 
 /* Function to read the frames of an image and process them */
@@ -603,12 +606,12 @@ static void mainloop(void)
                 exit(EXIT_FAILURE);
             }
 
-            if (read_frame())
+            if (read_frame() && (!abortS1))
             {
                 if(nanosleep(&read_delay, &time_error) != 0)
                     perror("nanosleep");
-                else
-                    printf("time_error.tv_sec=%ld, time_error.tv_nsec=%ld\n", time_error.tv_sec, time_error.tv_nsec);
+                else;
+                    //printf("time_error.tv_sec=%ld, time_error.tv_nsec=%ld\n", time_error.tv_sec, time_error.tv_nsec);
                 //printf("Count before decrementing = %d\n",count);
                 //count--;
                 //printf("Count after decrementing = %d\n",count);
@@ -1053,7 +1056,7 @@ long_options[] = {
         { "count",  required_argument, NULL, 'c' },
         { 0, 0, 0, 0 }
 };
-
+static unsigned long long S2Cnt=0;
 void *Sequencer(void *threadp)
 {
     struct timeval current_time_val;
@@ -1073,7 +1076,8 @@ void *Sequencer(void *threadp)
     do
     {
         delay_cnt=0; residual=0.0;
-
+        seqCnt = S2Cnt;
+        printf("First s--------Sequence Count = %llu\n",seqCnt);
         //gettimeofday(&current_time_val, (struct timezone *)0);
         //syslog(LOG_CRIT, "Sequencer thread prior to delay @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
         do
@@ -1097,6 +1101,7 @@ void *Sequencer(void *threadp)
         } while((residual > 0.0) && (delay_cnt < 100));
 
         seqCnt++;
+        printf("--------Sequence Count = %llu\n",seqCnt);
         gettimeofday(&current_time_val, (struct timezone *)0);
         syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d, msec=%d\n", seqCnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
@@ -1105,26 +1110,39 @@ void *Sequencer(void *threadp)
 
 
         // Release each service at a sub-rate of the generic sequencer rate
+        
+        // Service_2 = RT_MAX-2	@ 1 Hz
+        if((seqCnt % 1) == 0) sem_post(&semS2);
 
         // Servcie_1 = RT_MAX-1	@ 1 Hz
         if((seqCnt % 1) == 0) sem_post(&semS1);
         
-        usleep(50*USEC_PER_MSEC);
+        //usleep(50*USEC_PER_MSEC);
 
-        // Service_2 = RT_MAX-2	@ 1 Hz
-        if((seqCnt % 1) == 0) sem_post(&semS2);
         
-        if(seqCnt % frame_count == 0)
+        /*if(seqCnt == frame_count)
+        {
             frame_captured = true;
+            syslog(LOG_CRIT, "In sequencer Frame captured = %d",frame_captured);
+            //break;
+            seqCnt++;
+        }*/
 
         gettimeofday(&current_time_val, (struct timezone *)0);
         syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
     } while(!abortTest && (seqCnt <= frame_count));
 
-    sem_post(&semS1); sem_post(&semS2);
-    abortS1=TRUE; abortS2=TRUE;
-
+    syslog(LOG_CRIT, "Outside sequencer while");
+    sem_post(&semS1); 
+    syslog(LOG_CRIT, "Released S1 sem");
+    sem_post(&semS2);
+    syslog(LOG_CRIT, "Released S2 sem");
+    abortS1=TRUE; 
+    syslog(LOG_CRIT, "Aborted S1");
+    abortS2=TRUE;
+    syslog(LOG_CRIT, "Aborted S2");
+    syslog(LOG_CRIT, "Exiting sequencer...");
     pthread_exit((void *)0);
 }
 
@@ -1141,16 +1159,23 @@ void *Service_1(void *threadp)
 
     while(!abortS1)
     {
+        syslog(LOG_CRIT, "Inside while");
+        //if(!abortS1)
+        //{
+            syslog(LOG_CRIT, "Inside If S1Cnt");
+            syslog(LOG_CRIT, "Taking sem");
         sem_wait(&semS1);
-        
+        //printf("-----------------S2Count = %d\n",S2Cnt);
+        syslog(LOG_CRIT, "Entering mainloop");
         mainloop();
-        
+        syslog(LOG_CRIT, "Incrementing S1Cnt");
         S1Cnt++;
 
         gettimeofday(&current_time_val, (struct timezone *)0);
         syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+        //}
     }
-
+    syslog(LOG_CRIT, "Exiting thread 1");
     pthread_exit((void *)0);
 }
 
@@ -1159,32 +1184,40 @@ void *Service_2(void *threadp)
 {
     struct timeval current_time_val;
     double current_time;
-    unsigned long long S2Cnt=0;
+    //unsigned long long S2Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
 
     gettimeofday(&current_time_val, (struct timezone *)0);
     syslog(LOG_CRIT, "Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
     printf("Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
-    //while(!abortS2)
-    while(S2Cnt <= frame_count)
+    //while(!abortS2)S2Cnt <= (frame_count+1)
+    while(!abortS2)
     {
-        sem_wait(&semS2);
-        //if(frame_captured == true)
-        //{
-        #if defined(COLOR_CONVERT)
-            dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
-        #else
-            dump_pgm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
-        #endif
-        syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
-        S2Cnt++;
         
-        //}
-
+        sem_wait(&semS2);
+        syslog(LOG_CRIT, "S2Cnt inside while = %d", S2Cnt);
+        syslog(LOG_CRIT, "Frame captured = %d",frame_captured);
+        if(S2Cnt == frame_count-1)
+        {
+            S2Cnt++;
+            break;
+        }
+        else if(frame_captured == true)
+        {
+            #if defined(COLOR_CONVERT)
+                dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
+            #else
+                dump_pgm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
+            #endif
+            syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
+            S2Cnt++;        
+        }
+        //syslog(LOG_CRIT, "S2Cnt inside while = %d and value = %d", S2Cnt, (int)(condition));
         gettimeofday(&current_time_val, (struct timezone *)0);
         syslog(LOG_CRIT, "Time-stamp with Image Analysis release %llu @ sec=%d, msec=%d\n", S2Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
     }
+    syslog(LOG_CRIT, "----------------------Exiting thread 2--------------------");
 
     pthread_exit((void *)0);
 }
@@ -1345,7 +1378,7 @@ int main(int argc, char **argv)
 
     // Servcie_1 = RT_MAX-1	@ 3 Hz
     // For capturing images
-    rt_param[1].sched_priority=rt_max_prio-1;
+    rt_param[1].sched_priority=rt_max_prio-2;
     pthread_attr_setschedparam(&rt_sched_attr[1], &rt_param[1]);
     rc=pthread_create(&threads[1],               // pointer to thread descriptor
                       &rt_sched_attr[1],         // use specific attributes
@@ -1360,7 +1393,7 @@ int main(int argc, char **argv)
         
     // Service_2 = RT_MAX-2	@ 1 Hz
     // Dump PPM
-    rt_param[2].sched_priority=rt_max_prio-2;
+    rt_param[2].sched_priority=rt_max_prio-1;
     pthread_attr_setschedparam(&rt_sched_attr[2], &rt_param[2]);
     rc=pthread_create(&threads[2], &rt_sched_attr[2], Service_2, (void *)&(threadParams[2]));
     if(rc < 0)
@@ -1382,7 +1415,7 @@ int main(int argc, char **argv)
     if(rc < 0)
         perror("pthread_create for sequencer service 0");
     else
-        printf("pthread_create successful for sequeencer service 0\n");
+        printf("pthread_create successful for sequencer service 0\n");
 
 
    for(i=0;i<NUM_THREADS;i++)
@@ -1396,8 +1429,8 @@ int main(int argc, char **argv)
     uninit_device();
     close_device();
     fprintf(stderr, "\n");
-    //char str[] = "sh ./create_video.sh";
-    //system(str);
+    char str[] = "sh ./create_video.sh";
+    system(str);
     return 0;
 }
 
