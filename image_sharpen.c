@@ -58,12 +58,6 @@ sem_t semS1, semS2;
 struct timeval start_time_val;
 bool frame_captured = false;
 
-typedef struct
-{
-    int threadIdx;
-    unsigned long long sequencePeriods;
-} threadParams_t;
-
 /* Global variable declarations */
 // Format is used by a number of functions, so made as a file global
 static struct v4l2_format fmt;
@@ -76,12 +70,6 @@ enum io_method
         IO_METHOD_USERPTR,
 };
 
-struct buffer 
-{
-        void   *start;
-        size_t  length;
-};
-
 static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
@@ -89,12 +77,33 @@ struct buffer          *buffers;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-int              frame_count = 181;
+static int              frame_count = 181;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
 
 FLOAT PSF[9] = {-K/8.0, -K/8.0, -K/8.0, -K/8.0, K+1.0, -K/8.0, -K/8.0, -K/8.0, -K/8.0};
+
+char ppm_header[]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n";
+char ppm_dumpname[]="test00000000.ppm";
+
+unsigned int framecnt=0;
+unsigned char bigbuffer[(1280*960)];
+unsigned char image_frame[181][(1280*960)];
+int global_size;
+struct timespec global_frame_time;
+
+typedef struct
+{
+    int threadIdx;
+    unsigned long long sequencePeriods;
+} threadParams_t;
+
+struct buffer 
+{
+        void   *start;
+        size_t  length;
+};
 
 void print_scheduler(void)
 {
@@ -218,9 +227,6 @@ static int xioctl(int fh, int request, void *arg)
         return r;
 }
 
-char ppm_header[]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n";
-char ppm_dumpname[]="test00000000.ppm";
-
 /* Function to write the pixel values to generate an image of form .ppm */
 static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec *time)
 {
@@ -230,10 +236,8 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
     strcat(platform,hostname.sysname);
     strcat(platform," ");
     strcat(platform,hostname.nodename);
-    
-    //if(frame_captured == true)
-    //{
-    printf("\nPlatform - %s",platform);
+
+    printf("\nPlatform - %s\n",platform);
    
     snprintf(&ppm_dumpname[4], 9, "%08d", tag);
     strncat(&ppm_dumpname[12], ".ppm", 5);
@@ -262,45 +266,10 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
     system(timestamp_call);
     close(dumpfd);
     frame_captured = false;
-    syslog(LOG_CRIT, "In PPM DUMP Frame captured = %d",frame_captured);
-    
-    //}
-    
+    syslog(LOG_CRIT, "In PPM DUMP Frame captured = %d",frame_captured);    
 }
 
-char pgm_header[]="P5\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n";
-char pgm_dumpname[]="test00000000.pgm";
-
-/* Function to write the pixel values to generate an image of form .pgm */
-static void dump_pgm(const void *p, int size, unsigned int tag, struct timespec *time)
-{
-    int written, i, total, dumpfd;
-   
-    snprintf(&pgm_dumpname[4], 9, "%08d", tag);
-    strncat(&pgm_dumpname[12], ".pgm", 5);
-    dumpfd = open(pgm_dumpname, O_WRONLY | O_NONBLOCK | O_CREAT, 00666);
-
-    snprintf(&pgm_header[4], 11, "%010d", (int)time->tv_sec);
-    strncat(&pgm_header[14], " sec ", 5);
-    snprintf(&pgm_header[19], 11, "%010d", (int)((time->tv_nsec)/1000000));
-    strncat(&pgm_header[29], " msec \n"HRES_STR" "VRES_STR"\n255\n", 19);
-    written=write(dumpfd, pgm_header, sizeof(pgm_header));
-
-    total=0;
-
-    do
-    {
-        written=write(dumpfd, p, size);
-        total+=written;
-    } while(total < size);
-
-    printf("wrote %d bytes\n", total);
-
-    close(dumpfd);
-    
-}
-
-/* Function to convert from YUV into RGB */
+/* Function to convert from YUV into RGB 
 void yuv2rgb_float(float y, float u, float v, unsigned char *r, unsigned char *g, unsigned char *b)
 {
     float r_temp, g_temp, b_temp;
@@ -316,7 +285,7 @@ void yuv2rgb_float(float y, float u, float v, unsigned char *r, unsigned char *g
     // B = 1.164*(Y-16) + 2.018*(U-128)
     b_temp = 1.164*(y-16.0) + 2.018*(u-128.0);
     *b = b_temp > 255.0 ? 255 : (b_temp < 0.0 ? 0 : (unsigned char)b_temp);
-}
+} */
 
 
 // This is probably the most acceptable conversion from camera YUYV to RGB
@@ -360,11 +329,6 @@ void yuv2rgb(int y, int u, int v, unsigned char *r, unsigned char *g, unsigned c
    *b = b1 ;
 }
 
-unsigned int framecnt=0;
-unsigned char bigbuffer[(1280*960)];
-unsigned char image_frame[181][(1280*960)];
-int global_size;
-struct timespec global_frame_time;
 
 /* Function to carry out various image processing operations */
 static void process_image(const void *p, int size)
@@ -373,9 +337,6 @@ static void process_image(const void *p, int size)
     struct timespec frame_time;
     int y_temp, y2_temp, u_temp, v_temp;
     unsigned char *pptr = (unsigned char *)p;
-    
-    if(!abortS1)
-        {
 
     // record when process was called
     clock_gettime(CLOCK_REALTIME, &frame_time);    
@@ -385,18 +346,11 @@ static void process_image(const void *p, int size)
 
     // This just dumps the frame to a file now, but you could replace with whatever image
     // processing you wish.
-    //
 
-    if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_GREY)
-    {
-        printf("Dump graymap as-is size %d\n", size);
-        dump_pgm(p, size, framecnt, &frame_time);
-    }
-
-    else if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV)
+    if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV)
     {
 
-#if defined(COLOR_CONVERT)
+//#if defined(COLOR_CONVERT)
         printf("Dump YUYV converted to RGB size %d\n", size);
        
         // Pixels are YU and YV alternating, so YUYV which is 4 bytes
@@ -408,7 +362,7 @@ static void process_image(const void *p, int size)
             yuv2rgb(y_temp, u_temp, v_temp, &bigbuffer[newi], &bigbuffer[newi+1], &bigbuffer[newi+2]);
             yuv2rgb(y2_temp, u_temp, v_temp, &bigbuffer[newi+3], &bigbuffer[newi+4], &bigbuffer[newi+5]);
         }
-        sharpen(bigbuffer, ((size*6)/4));
+        //sharpen(bigbuffer, ((size*6)/4));
         //dump_ppm(bigbuffer, ((size*6)/4), framecnt, &frame_time);
         global_size = (size*6)/4;
         global_frame_time = frame_time;
@@ -417,24 +371,6 @@ static void process_image(const void *p, int size)
         for(i = 0;i < (1280*960);i++)
             image_frame[(framecnt % frame_count)][i] = bigbuffer[i];
         printf("Image Frame No. = %d\n",(framecnt % frame_count));
-#else
-        printf("Dump YUYV converted to YY size %d\n", size);
-       
-        // Pixels are YU and YV alternating, so YUYV which is 4 bytes
-        // We want Y, so YY which is 2 bytes
-        //
-        for(i=0, newi=0; i<size; i=i+4, newi=newi+2)
-        {
-            // Y1=first byte and Y2=third byte
-            bigbuffer[newi]=pptr[i];
-            bigbuffer[newi+1]=pptr[i+2];
-        }
-
-        //dump_pgm(bigbuffer, (size/2), framecnt, &frame_time);
-        global_size = size/2;
-        global_frame_time = frame_time;
-#endif
-
     }
 
     else if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_RGB24)
@@ -450,8 +386,6 @@ static void process_image(const void *p, int size)
     fflush(stderr);
     //fprintf(stderr, ".");
     fflush(stdout);
-    
-     }
 }
 
 /* Function to read the frames of an image and process them */
@@ -464,7 +398,7 @@ static int read_frame(void)
     {
 
         case IO_METHOD_READ:
-            printf("Line 461 - IO_METHOD_READ\n");
+            //printf("Line 461 - IO_METHOD_READ\n");
             if (-1 == read(fd, buffers[0].start, buffers[0].length))
             {
                 switch (errno)
@@ -487,7 +421,7 @@ static int read_frame(void)
             break;
 
         case IO_METHOD_MMAP:
-        printf("Line 484 - IO_METHOD_MMAP\n");
+        //printf("Line 484 - IO_METHOD_MMAP\n");
             CLEAR(buf);
 
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -522,7 +456,7 @@ static int read_frame(void)
             break;
 
         case IO_METHOD_USERPTR:
-        printf("Line 519 - IO_METHOD_USERPTR\n");
+        //printf("Line 519 - IO_METHOD_USERPTR\n");
             CLEAR(buf);
 
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -558,8 +492,6 @@ static int read_frame(void)
                     errno_exit("VIDIOC_QBUF");
             break;
     }
-
-    //printf("R");
     return 1;
 }
 
@@ -573,57 +505,38 @@ static void mainloop(void)
     read_delay.tv_sec=0;
     read_delay.tv_nsec=30000;
 
-    //count = frame_count;
-    //count = 1;
+        fd_set fds;
+        struct timeval tv;
+        int r;
 
-    //while (count > 0)
-    //{
-        //for (;;)
-        //{
-            fd_set fds;
-            struct timeval tv;
-            int r;
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
 
-            FD_ZERO(&fds);
-            FD_SET(fd, &fds);
+        /* Timeout. */
+        tv.tv_sec = 4;
+        tv.tv_usec = 0;
 
-            /* Timeout. */
-            tv.tv_sec = 4;
-            tv.tv_usec = 0;
+        r = select(fd + 1, &fds, NULL, NULL, &tv);
 
-            r = select(fd + 1, &fds, NULL, NULL, &tv);
+        if (-1 == r)
+        {
+            if (EINTR == errno);
+                //continue;
+            errno_exit("select");
+        }
 
-            if (-1 == r)
-            {
-                if (EINTR == errno);
-                    //continue;
-                errno_exit("select");
-            }
+        if (0 == r)
+        {
+            fprintf(stderr, "select timeout\n");
+            exit(EXIT_FAILURE);
+        }
 
-            if (0 == r)
-            {
-                fprintf(stderr, "select timeout\n");
-                exit(EXIT_FAILURE);
-            }
-
-            if (read_frame() && (!abortS1))
-            {
-                if(nanosleep(&read_delay, &time_error) != 0)
-                    perror("nanosleep");
-                else;
-                    //printf("time_error.tv_sec=%ld, time_error.tv_nsec=%ld\n", time_error.tv_sec, time_error.tv_nsec);
-                //printf("Count before decrementing = %d\n",count);
-                //count--;
-                //printf("Count after decrementing = %d\n",count);
-                //break;
-            }
-
-            /* EAGAIN - continue select loop unless count done. */
-            //if(count <= 0) break;
-        //}
-
-        //if(count <= 0) break;
-    //}
+        if (read_frame() && (!abortS1))
+        {
+            if(nanosleep(&read_delay, &time_error) != 0)
+                perror("nanosleep");
+            else;
+        }
 }
  
 /* Function to stop capturing the images */
@@ -1061,7 +974,7 @@ void *Sequencer(void *threadp)
 {
     struct timeval current_time_val;
     //struct timespec delay_time = {0,33333333}; // delay for 33.33 msec, 30 Hz
-    struct timespec delay_time = {0,500000000}; // delay for 33.33 msec, 30 Hz
+    struct timespec delay_time = {1,0}; // delay for 33.33 msec, 30 Hz
     struct timespec remaining_time;
     double current_time;
     double residual;
@@ -1076,8 +989,8 @@ void *Sequencer(void *threadp)
     do
     {
         delay_cnt=0; residual=0.0;
-        seqCnt = S2Cnt;
-        printf("First s--------Sequence Count = %llu\n",seqCnt);
+        //seqCnt = S2Cnt;
+        //printf("First s--------Sequence Count = %llu\n",seqCnt);
         //gettimeofday(&current_time_val, (struct timezone *)0);
         //syslog(LOG_CRIT, "Sequencer thread prior to delay @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
         do
@@ -1111,22 +1024,15 @@ void *Sequencer(void *threadp)
 
         // Release each service at a sub-rate of the generic sequencer rate
         
-        // Service_2 = RT_MAX-2	@ 1 Hz
-        if((seqCnt % 1) == 0) sem_post(&semS2);
-
         // Servcie_1 = RT_MAX-1	@ 1 Hz
-        if((seqCnt % 1) == 0) sem_post(&semS1);
+        //if((seqCnt % 1) == 0) sem_post(&semS1);
+        
+        sem_post(&semS1); sem_post(&semS2);
+        
+        // Service_2 = RT_MAX-2	@ 1 Hz
+        //if((seqCnt % 1) == 0) sem_post(&semS2);
         
         //usleep(50*USEC_PER_MSEC);
-
-        
-        /*if(seqCnt == frame_count)
-        {
-            frame_captured = true;
-            syslog(LOG_CRIT, "In sequencer Frame captured = %d",frame_captured);
-            //break;
-            seqCnt++;
-        }*/
 
         gettimeofday(&current_time_val, (struct timezone *)0);
         syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
@@ -1200,16 +1106,19 @@ void *Service_2(void *threadp)
         syslog(LOG_CRIT, "Frame captured = %d",frame_captured);
         if(S2Cnt == frame_count-1)
         {
-            S2Cnt++;
+          //  S2Cnt++;
             break;
         }
-        else if(frame_captured == true)
+        if(S2Cnt == 0 && frame_captured == true)
         {
-            #if defined(COLOR_CONVERT)
-                dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
-            #else
-                dump_pgm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
-            #endif
+            dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
+            syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
+            S2Cnt++;        
+        }
+        //if(frame_captured == true)
+        else
+        {
+            dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
             syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
             S2Cnt++;        
         }
@@ -1353,8 +1262,8 @@ int main(int argc, char **argv)
         for(i=0; i < NUM_THREADS; i++)
     {
 
-      CPU_ZERO(&threadcpu);
-      CPU_SET(3, &threadcpu);
+      //CPU_ZERO(&threadcpu);
+      //CPU_SET(3, &threadcpu);
 
       rc=pthread_attr_init(&rt_sched_attr[i]);
       rc=pthread_attr_setinheritsched(&rt_sched_attr[i], PTHREAD_EXPLICIT_SCHED);
@@ -1378,7 +1287,10 @@ int main(int argc, char **argv)
 
     // Servcie_1 = RT_MAX-1	@ 3 Hz
     // For capturing images
-    rt_param[1].sched_priority=rt_max_prio-2;
+    CPU_ZERO(&threadcpu);
+	CPU_SET(2, &threadcpu);
+    rc=pthread_attr_setaffinity_np(&rt_sched_attr[1], sizeof(cpu_set_t), &threadcpu);
+    rt_param[1].sched_priority=rt_max_prio-1;
     pthread_attr_setschedparam(&rt_sched_attr[1], &rt_param[1]);
     rc=pthread_create(&threads[1],               // pointer to thread descriptor
                       &rt_sched_attr[1],         // use specific attributes
@@ -1393,7 +1305,10 @@ int main(int argc, char **argv)
         
     // Service_2 = RT_MAX-2	@ 1 Hz
     // Dump PPM
-    rt_param[2].sched_priority=rt_max_prio-1;
+        CPU_ZERO(&threadcpu);
+	CPU_SET(2, &threadcpu);
+    rc=pthread_attr_setaffinity_np(&rt_sched_attr[2], sizeof(cpu_set_t), &threadcpu);
+    rt_param[2].sched_priority=rt_max_prio-2;
     pthread_attr_setschedparam(&rt_sched_attr[2], &rt_param[2]);
     rc=pthread_create(&threads[2], &rt_sched_attr[2], Service_2, (void *)&(threadParams[2]));
     if(rc < 0)
@@ -1409,6 +1324,9 @@ int main(int argc, char **argv)
 
     // Sequencer = RT_MAX	@ 30 Hz
     //
+        CPU_ZERO(&threadcpu);
+	CPU_SET(2, &threadcpu);
+    rc=pthread_attr_setaffinity_np(&rt_sched_attr[0], sizeof(cpu_set_t), &threadcpu);
     rt_param[0].sched_priority=rt_max_prio;
     pthread_attr_setschedparam(&rt_sched_attr[0], &rt_param[0]);
     rc=pthread_create(&threads[0], &rt_sched_attr[0], Sequencer, (void *)&(threadParams[0]));
@@ -1423,8 +1341,6 @@ int main(int argc, char **argv)
 
    printf("\nTEST COMPLETE\n");
         
-    // Must put this in thread
-    // mainloop();
     stop_capturing();
     uninit_device();
     close_device();
