@@ -46,6 +46,7 @@
 
 #define USEC_PER_MSEC (1000)
 #define NANOSEC_PER_SEC (1000000000)
+#define MSEC_PER_SEC	(1000)
 #define NUM_CPU_CORES (1)
 #define TRUE (1)
 #define FALSE (0)
@@ -62,6 +63,20 @@ bool frame_captured = false;
 // Format is used by a number of functions, so made as a file global
 static struct v4l2_format fmt;
 struct utsname hostname;
+
+double *seq_exec_time;	//To store execution time for each iteration
+double *seq_start_time;		//To store start time for each iteration
+double *seq_stop_time;		//To store end time for each iteration
+
+double *fc_exec_time;	//To store execution time for each iteration
+double *fc_start_time;		//To store start time for each iteration
+double *fc_stop_time;		//To store end time for each iteration
+
+double *pd_exec_time;	//To store execution time for each iteration
+double *pd_start_time;		//To store start time for each iteration
+double *pd_stop_time;		//To store end time for each iteration
+
+struct timespec speed_1fps = {1,0};
 
 enum io_method 
 {
@@ -104,6 +119,10 @@ struct buffer
         void   *start;
         size_t  length;
 };
+
+void sequencer_parameters(void);
+void frame_capture_parameters(void);
+void ppm_dump_parameters(void);
 
 void print_scheduler(void)
 {
@@ -255,22 +274,22 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
     written=write(dumpfd, ppm_header, sizeof(ppm_header));
 
     total=0;
-    syslog(LOG_CRIT,"Before do while");
+    //syslog(LOG_CRIT,"Before do while");
     do
     {
-        syslog(LOG_CRIT,"Size value = %d", size);
+        //syslog(LOG_CRIT,"Size value = %d", size);
         written=write(dumpfd, p, size);
-        syslog(LOG_CRIT,"Written value = %d", written);
+        //syslog(LOG_CRIT,"Written value = %d", written);
         total+=written;
-        syslog(LOG_CRIT,"Total value = %d", total);
-        syslog(LOG_CRIT,"Inside do while");
+        //syslog(LOG_CRIT,"Total value = %d", total);
+        //syslog(LOG_CRIT,"Inside do while");
     } while(total < size);
 
     printf("wrote %d bytes\n", total);
     system(timestamp_call);
     close(dumpfd);
     frame_captured = false;
-    syslog(LOG_CRIT, "In PPM DUMP Frame captured = %d",frame_captured);    
+    //syslog(LOG_CRIT, "In PPM DUMP Frame captured = %d",frame_captured);    
 }
 
 /* Function to convert from YUV into RGB 
@@ -346,7 +365,7 @@ static void process_image(const void *p, int size)
     clock_gettime(CLOCK_REALTIME, &frame_time);    
 
     framecnt++;
-    printf("frame %d: ", framecnt);
+    printf("-------------frame %d: ", framecnt);
 
     // This just dumps the frame to a file now, but you could replace with whatever image
     // processing you wish.
@@ -373,8 +392,8 @@ static void process_image(const void *p, int size)
         frame_captured = true;
         syslog(LOG_CRIT, "In process image Frame captured = %d",frame_captured);
         for(i = 0;i < (1280*960);i++)
-            image_frame[(framecnt % frame_count)][i] = bigbuffer[i];
-        printf("Image Frame No. = %d\n",(framecnt % frame_count));
+            image_frame[(framecnt % 60)][i] = bigbuffer[i];
+        printf("Image Frame No. (framecnt % 60) = %d\n",(framecnt % 60));
     }
 
     else if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_RGB24)
@@ -976,7 +995,8 @@ long_options[] = {
 
 void *Sequencer(void *threadp)
 {
-    struct timeval current_time_val;
+    //struct timeval current_time_val;
+    struct timespec current_time_val;
     //struct timespec delay_time = {0,33333333}; // delay for 33.33 msec, 30 Hz
     struct timespec delay_time = {1,0}; // delay for 33.33 msec, 30 Hz
     struct timespec remaining_time;
@@ -985,10 +1005,26 @@ void *Sequencer(void *threadp)
     int rc, delay_cnt=0;
     unsigned long long seqCnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    
+	double start_time_sec;	//To store start time in seconds
+	double stop_time_sec;	//To store end time in seconds
+    
+	if((seq_exec_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("Sequencer Execution Time:Malloc Failed\n");
+	}
+	if((seq_start_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("Sequencer Start Time:Malloc Failed\n");
+	}
+	if((seq_stop_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("Sequencer Stop Time:Malloc Failed\n");
+	} 
 
-    gettimeofday(&current_time_val, (struct timezone *)0);
-    syslog(LOG_CRIT, "Sequencer thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-    printf("Sequencer thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //gettimeofday(&current_time_val, (struct timezone *)0);
+    //syslog(LOG_CRIT, "Sequencer thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //printf("Sequencer thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
     do
     {
@@ -1017,12 +1053,27 @@ void *Sequencer(void *threadp)
            
         } while((residual > 0.0) && (delay_cnt < 100));
 
-        seqCnt++;
+        
         printf("--------Sequence Count = %llu\n",seqCnt);
-        gettimeofday(&current_time_val, (struct timezone *)0);
-        syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d, msec=%d\n", seqCnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+        
+        /* Calculate Start time */
+        clock_gettime(CLOCK_REALTIME,&current_time_val);
+
+        /* Store start time in seconds */
+        start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
 
 
+        if(((seq_start_time + seqCnt) >= seq_start_time) && ((seq_start_time + seqCnt) <= (seq_start_time + (frame_count))))
+        {
+            //syslog(LOG_INFO,"[SEQUENCER]: Valid Address");
+            //printf("Valid Data Address\n");
+            *(seq_start_time + seqCnt) = start_time_sec; 
+        }
+        
+        //gettimeofday(&current_time_val, (struct timezone *)0);
+        syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d\n", seqCnt, (int)(start_time_sec));
+
+        //syslog(LOG_CRIT, "Sequencer thread prior to delay @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
         if(delay_cnt > 1) printf("Sequencer looping delay %d\n", delay_cnt);
 
 
@@ -1037,9 +1088,15 @@ void *Sequencer(void *threadp)
         //if((seqCnt % 1) == 0) sem_post(&semS2);
         
         //usleep(50*USEC_PER_MSEC);
-
-        gettimeofday(&current_time_val, (struct timezone *)0);
-        syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+        
+        clock_gettime(CLOCK_REALTIME,&current_time_val);
+        
+        stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+			
+        *(seq_stop_time + seqCnt) = stop_time_sec;
+        seqCnt++;
+        syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+        //syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
     } while(!abortTest && (seqCnt < (frame_count)));
 
@@ -1058,14 +1115,31 @@ void *Sequencer(void *threadp)
 
 void *Service_1(void *threadp)
 {
-    struct timeval current_time_val;
+    //struct timeval current_time_val;
+    struct timespec current_time_val;
     double current_time;
     unsigned long long S1Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    
+    double start_time_sec;	//To store start time in seconds
+	double stop_time_sec;	//To store end time in seconds
+    
+	if((fc_exec_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("Frame Capture Execution Time:Malloc Failed\n");
+	}
+	if((fc_start_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("Frame Capture Start Time:Malloc Failed\n");
+	}
+	if((fc_stop_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("Frame Capture Stop Time:Malloc Failed\n");
+	}
 
-    gettimeofday(&current_time_val, (struct timezone *)0);
-    syslog(LOG_CRIT, "Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-    printf("Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //gettimeofday(&current_time_val, (struct timezone *)0);
+    //syslog(LOG_CRIT, "Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //printf("Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
     while(!abortS1)
     {
@@ -1077,13 +1151,24 @@ void *Service_1(void *threadp)
         sem_wait(&semS1);
         //printf("-----------------S2Count = %d\n",S2Cnt);
         //syslog(LOG_CRIT, "Entering mainloop");
+        
+        clock_gettime(CLOCK_REALTIME,&current_time_val);
+        /* Store start time in seconds */
+        start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+        *(fc_start_time + S1Cnt) = start_time_sec;
+        syslog(LOG_CRIT, "Frame Capture cycle %llu @ sec=%d\n", S1Cnt, (int)(start_time_sec));
+        	        
         mainloop();
         //syslog(LOG_CRIT, "Incrementing S1Cnt");
-        S1Cnt++;
+        
 
-        gettimeofday(&current_time_val, (struct timezone *)0);
-        syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+        clock_gettime(CLOCK_REALTIME,&current_time_val);
+        //syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
         //}
+        stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
+        *(fc_stop_time + S1Cnt) = stop_time_sec;
+        S1Cnt++;
+        syslog(LOG_CRIT, "Frame Capture release all sub-services @ sec=%d\n", (int)(stop_time_sec));                
     }
     syslog(LOG_CRIT, "Exiting thread 1");
     pthread_exit((void *)0);
@@ -1092,37 +1177,81 @@ void *Service_1(void *threadp)
 
 void *Service_2(void *threadp)
 {
-    struct timeval current_time_val;
+    //struct timeval current_time_val;
+    struct timespec current_time_val;
     double current_time;
     unsigned long long S2Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    
+    double start_time_sec;	//To store start time in seconds
+	double stop_time_sec;	//To store end time in seconds
+    
+	if((pd_exec_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("PPM Dump Execution Time:Malloc Failed\n");
+	}
+	if((pd_start_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("PPM Dump Start Time:Malloc Failed\n");
+	}
+	if((pd_stop_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	{
+		printf("PPM Dump Stop Time:Malloc Failed\n");
+	}
 
-    gettimeofday(&current_time_val, (struct timezone *)0);
-    syslog(LOG_CRIT, "Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
-    printf("Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //gettimeofday(&current_time_val, (struct timezone *)0);
+    //syslog(LOG_CRIT, "Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //printf("Time-stamp with Image Analysis thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
     //while(!abortS2)S2Cnt <= (frame_count+1)
-    while(S2Cnt < (frame_count) && !abortS2)
+    while(!abortS2)
     {
-        syslog(LOG_CRIT, "Take sema for = %d", S2Cnt);
+        //syslog(LOG_CRIT, "Take sema for = %d", S2Cnt);
         sem_wait(&semS2);
-        syslog(LOG_CRIT, "S2Cnt inside while = %d", S2Cnt);
-        syslog(LOG_CRIT, "Frame captured = %d",frame_captured);
+        //syslog(LOG_CRIT, "S2Cnt inside while = %d", S2Cnt);
+        //syslog(LOG_CRIT, "Frame captured = %d",frame_captured);
+        
+
+        //syslog(LOG_CRIT, "PPM Dump cycle %llu @ sec=%d\n", S2Cnt, (int)(start_time_sec));
         if(S2Cnt == 0 && frame_captured == true)
         {
+                    clock_gettime(CLOCK_REALTIME,&current_time_val);
+        /* Store start time in seconds */
+        start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+        *(pd_start_time + S2Cnt) = start_time_sec;
             dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
-            syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
-            S2Cnt++;        
+            //syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
+            
+            clock_gettime(CLOCK_REALTIME,&current_time_val);
+            stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+            printf("---------------------------------------------Difference = %lf\n",(stop_time_sec-start_time_sec));			
+            *(pd_stop_time + S2Cnt) = stop_time_sec;
+            S2Cnt++;
+            syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+        
         }
         else if(S2Cnt != 0)
         {
-            dump_ppm(image_frame[(S2Cnt+1)%frame_count], global_size, (S2Cnt+1), &global_frame_time);
-            syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
-            S2Cnt++;        
+            //printf("S2Cnt = %llu",S2Cnt);
+            //printf("((S2Cnt+1) % 60) = %llu",((S2Cnt+1) % 60));
+                    clock_gettime(CLOCK_REALTIME,&current_time_val);
+        /* Store start time in seconds */
+        start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+        *(pd_start_time + S2Cnt) = start_time_sec;
+            dump_ppm(image_frame[((S2Cnt+1) % 60)], global_size, (S2Cnt+1), &global_frame_time);
+            //syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
+            
+            clock_gettime(CLOCK_REALTIME,&current_time_val);
+            //syslog(LOG_CRIT, "After clock get time");
+            stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
+            printf("---------------------------------------------Difference = %lf\n",(stop_time_sec-start_time_sec));			
+            *(pd_stop_time + S2Cnt) = stop_time_sec;
+            S2Cnt++;
+            syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));      
         }
         //syslog(LOG_CRIT, "S2Cnt inside while = %d and value = %d", S2Cnt, (int)(condition));
-        gettimeofday(&current_time_val, (struct timezone *)0);
-        syslog(LOG_CRIT, "Time-stamp with Image Analysis release %llu @ sec=%d, msec=%d\n", S2Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+        //gettimeofday(&current_time_val, (struct timezone *)0);
+        //syslog(LOG_CRIT, "Time-stamp with Image Analysis release %llu @ sec=%d, msec=%d\n", S2Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
     }
     syslog(LOG_CRIT, "----------------------Exiting thread 2--------------------");
 
@@ -1285,10 +1414,142 @@ int main(int argc, char **argv)
     stop_capturing();
     uninit_device();
     close_device();
+    
+    sequencer_parameters();
+    frame_capture_parameters();
+    ppm_dump_parameters();
+    
     fprintf(stderr, "\n");
-    char str[] = "sh ./create_video.sh";
-    system(str);
+    //char str[] = "sh ./create_video.sh";
+    //system(str);
     return 0;
+}
+
+void sequencer_parameters(void)
+{
+    double seq_wcet = 0;			//Store worst case execution for image capturing
+    double seq_total_time = 0;		//Store average execution time
+    double seq_jitter = 0;			//Store jitter for image capture
+    double seq_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    
+	printf("********************************SEQUENCER PARAMETER ANALYSIS********************************\n");
+
+	/* Calculate execution time, WCET and average execution time */
+	for(int i=0;i < (frame_count) ;i++)
+	{
+		/* Calculate execution time of each iteration of sequencer (in secs) */
+		*(seq_exec_time + i) = (*(seq_stop_time + i) - *(seq_start_time + i))*MSEC_PER_SEC;
+
+		if(seq_wcet < *(seq_exec_time + i))
+		{
+			seq_wcet = *(seq_exec_time + i);
+		}
+
+		/* Calculate total time of execution for image capture thread */
+		seq_total_time += *(seq_exec_time + i);
+	}
+    seq_deadline = (seq_total_time/frame_count) * 1.0;
+    sample_jitter = seq_wcet - seq_deadline;
+	for(int i=1; i< (frame_count) ;i++)
+	{
+        seq_jitter = (*(seq_start_time + i - 1) + speed_1fps.tv_sec) - (*(seq_start_time + i)) ;
+        avg_jitter += seq_jitter;	
+	}
+    avg_jitter /= frame_count;
+	printf("WCET SEQUENCER = %lf\n",seq_wcet);
+	printf("ACET SEQUENCER = %lf\n",seq_total_time/(frame_count));
+    printf("Jitter = %lf\n",seq_jitter);
+    printf("Sample Jitter = %lf\n",sample_jitter);
+    printf("Average Jitter = %lf\n",avg_jitter);
+    printf("Deadline Sequencer = %lf\n",seq_deadline);
+}
+
+void frame_capture_parameters(void)
+{
+    double fc_wcet = 0;			//Store worst case execution for image capturing
+    double fc_total_time = 0;		//Store average execution time
+    double fc_jitter = 0;			//Store jitter for image capture
+    double fc_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    
+	printf("********************************FRAME CAPTURE PARAMETER ANALYSIS********************************\n");
+
+	/* Calculate execution time, WCET and average execution time */
+	for(int i=1;i < (frame_count) ;i++)
+	{
+        //printf("Inside for loop\n");
+		/* Calculate execution time of each iteration of sequencer (in secs) */
+		*(fc_exec_time + i) = (*(fc_stop_time + i) - *(fc_start_time + i))*MSEC_PER_SEC;
+
+		if(fc_wcet < *(fc_exec_time + i))
+		{
+            //printf("Inside if\n");
+			fc_wcet = *(fc_exec_time + i);
+            //printf("WCET = %lf for frame = %d\n",fc_wcet,i);
+		}
+
+		/* Calculate total time of execution for image capture thread */
+		fc_total_time += *(fc_exec_time + i);
+	}
+    fc_deadline = (fc_total_time/frame_count) * 1.0;
+    sample_jitter = fc_wcet - fc_deadline;
+	for(int i=1; i< (frame_count) ;i++)
+	{
+        fc_jitter = (*(fc_start_time + i - 1) + speed_1fps.tv_sec) - (*(fc_start_time + i)) ;
+        //printf("FC JItter = %lf & 1fps.tv = %lf\n",fc_jitter,(double)(speed_1fps.tv_sec));
+        avg_jitter += fc_jitter;	
+	}
+    avg_jitter /= frame_count;
+	printf("WCET FRAME CAPTURE = %lf\n",fc_wcet);
+	printf("ACET FRAME CAPTURE = %lf\n",fc_total_time/(frame_count));
+    printf("Jitter = %lf\n",fc_jitter);
+    printf("Sample Jitter = %lf\n",sample_jitter);
+    printf("Average Jitter = %lf\n",avg_jitter);
+    printf("Deadline Frame Capture = %lf\n",fc_deadline);
+}
+
+void ppm_dump_parameters(void)
+{
+    double pd_wcet = 0;			//Store worst case execution for image capturing
+    double pd_total_time = 0;		//Store average execution time
+    double pd_jitter = 0;			//Store jitter for image capture
+    double pd_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    
+	printf("********************************PPM DUMP PARAMETER ANALYSIS********************************\n");
+
+	/* Calculate execution time, WCET and average execution time */
+	for(int i=0;i < (frame_count-1) ;i++)
+	{
+        //printf("Inside for\n");
+		/* Calculate execution time of each iteration of sequencer (in secs) */
+		*(pd_exec_time + i) = (*(pd_stop_time + i) - *(pd_start_time + i))*MSEC_PER_SEC;
+        //printf("Stop Time = %lf, start time = %lf for frame = %d\n",*(pd_stop_time+i),*(pd_start_time+i),i);
+        //printf("Execution time = %lf for frame = %d\n",*(pd_exec_time + i),i);
+
+		if(pd_wcet < *(pd_exec_time + i))
+		{
+            //printf("Inside if\n");
+			pd_wcet = *(pd_exec_time + i);
+            //printf("WCET = %lf for frame = %d\n",pd_wcet,i);
+		}
+
+		/* Calculate total time of execution for image capture thread */
+		pd_total_time += *(pd_exec_time + i);
+	}
+    pd_deadline = (pd_total_time/frame_count) * 1.0;
+    sample_jitter = pd_wcet - pd_deadline;
+	for(int i=1; i< (frame_count-1) ;i++)
+	{
+        pd_jitter = (*(pd_start_time + i - 1) + speed_1fps.tv_sec) - (*(pd_start_time + i)) ;
+        //printf("PD JItter = %lf & 1fps.tv = %lf\n",pd_jitter,(double)(speed_1fps.tv_sec));
+        avg_jitter += pd_jitter;	
+	}
+    avg_jitter /= (frame_count-1);
+	printf("WCET PPM DUMP = %lf\n",pd_wcet);
+	printf("ACET PPM DUMP = %lf\n",pd_total_time/(frame_count));
+    printf("Jitter = %lf\n",pd_jitter);
+    printf("Sample Jitter = %lf\n",sample_jitter);
+    printf("Average Jitter = %lf\n",avg_jitter);
+    printf("Deadline PPM dump = %lf\n",pd_deadline);
 }
 
 /* References 
