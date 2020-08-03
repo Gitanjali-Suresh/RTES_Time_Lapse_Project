@@ -47,15 +47,15 @@
 #define USEC_PER_MSEC (1000)
 #define NANOSEC_PER_SEC (1000000000)
 #define MSEC_PER_SEC	(1000)
-#define NUM_CPU_CORES (1)
+#define NUM_CPU_CORES (4)
 #define TRUE (1)
 #define FALSE (0)
 
-#define NUM_THREADS (2+1)
+#define NUM_THREADS (3+1)
 
 int abortTest=FALSE;
-int abortS1=FALSE, abortS2=FALSE;
-sem_t semS1, semS2;
+int abortS1=FALSE, abortS2=FALSE, abortS3=FALSE;
+sem_t semS1, semS2, semS3;
 struct timeval start_time_val;
 bool frame_captured = false;
 
@@ -76,6 +76,10 @@ double *pd_exec_time;	//To store execution time for each iteration
 double *pd_start_time;		//To store start time for each iteration
 double *pd_stop_time;		//To store end time for each iteration
 
+double *pi_exec_time;	//To store execution time for each iteration
+double *pi_start_time;		//To store start time for each iteration
+double *pi_stop_time;		//To store end time for each iteration
+
 struct timespec speed_1fps = {1,0};
 
 enum io_method 
@@ -89,10 +93,11 @@ static char            *dev_name;
 static enum io_method   io = IO_METHOD_MMAP;
 static int              fd = -1;
 struct buffer          *buffers;
+struct buffer          process_image_buffer;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 181;
+static int              frame_count = 11;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
@@ -123,6 +128,7 @@ struct buffer
 void sequencer_parameters(void);
 void frame_capture_parameters(void);
 void ppm_dump_parameters(void);
+void process_image_parameters(void);
 
 void print_scheduler(void)
 {
@@ -282,7 +288,7 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
         //syslog(LOG_CRIT,"Written value = %d", written);
         total+=written;
         //syslog(LOG_CRIT,"Total value = %d", total);
-        //syslog(LOG_CRIT,"Inside do while");
+        syslog(LOG_CRIT,"Inside do while");
     } while(total < size);
 
     printf("wrote %d bytes\n", total);
@@ -393,7 +399,7 @@ static void process_image(const void *p, int size)
         syslog(LOG_CRIT, "In process image Frame captured = %d",frame_captured);
         for(i = 0;i < (1280*960);i++)
             image_frame[(framecnt % 60)][i] = bigbuffer[i];
-        printf("Image Frame No. (framecnt % 60) = %d\n",(framecnt % 60));
+        syslog(LOG_INFO,"Image Frame No. (framecnt % 60) = %d\n",(framecnt % 60));
     }
 
     else if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_RGB24)
@@ -471,8 +477,11 @@ static int read_frame(void)
             }
 
             assert(buf.index < n_buffers);
-
-            process_image(buffers[buf.index].start, buf.bytesused);
+            
+            process_image_buffer.start = (void *)buffers[buf.index].start;
+            process_image_buffer.length = buf.bytesused;
+            
+            //process_image(buffers[buf.index].start, buf.bytesused);
 
             if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
                     errno_exit("VIDIOC_QBUF");
@@ -521,7 +530,6 @@ static int read_frame(void)
 /* Main function to perform various computations */
 static void mainloop(void)
 {
-    unsigned int count;
     struct timespec read_delay;
     struct timespec time_error;
 
@@ -1009,15 +1017,15 @@ void *Sequencer(void *threadp)
 	double start_time_sec;	//To store start time in seconds
 	double stop_time_sec;	//To store end time in seconds
     
-	if((seq_exec_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((seq_exec_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("Sequencer Execution Time:Malloc Failed\n");
 	}
-	if((seq_start_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((seq_start_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("Sequencer Start Time:Malloc Failed\n");
 	}
-	if((seq_stop_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((seq_stop_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("Sequencer Stop Time:Malloc Failed\n");
 	} 
@@ -1082,7 +1090,10 @@ void *Sequencer(void *threadp)
         // Servcie_1 = RT_MAX-1	@ 1 Hz
         //if((seqCnt % 1) == 0) sem_post(&semS1);
         
-        sem_post(&semS1); sem_post(&semS2);
+        sem_post(&semS1); sem_post(&semS3); 
+        
+        //if(seqCnt > 2)
+          //  sem_post(&semS2);
         
         // Service_2 = RT_MAX-2	@ 1 Hz
         //if((seqCnt % 1) == 0) sem_post(&semS2);
@@ -1103,12 +1114,16 @@ void *Sequencer(void *threadp)
     syslog(LOG_CRIT, "Outside sequencer while");
     sem_post(&semS1); 
     syslog(LOG_CRIT, "Released S1 sem");
-    sem_post(&semS2);
-    syslog(LOG_CRIT, "Released S2 sem");
+    sem_post(&semS3); 
+    syslog(LOG_CRIT, "Released S3 sem");
+    //sem_post(&semS2);
+    //syslog(LOG_CRIT, "Released S2 sem");
     abortS1=TRUE; 
     syslog(LOG_CRIT, "Aborted S1");
-    abortS2=TRUE;
-    syslog(LOG_CRIT, "Aborted S2");
+    abortS3=TRUE; 
+    syslog(LOG_CRIT, "Aborted S3");
+    //abortS2=TRUE;
+    //syslog(LOG_CRIT, "Aborted S2");
     syslog(LOG_CRIT, "Exiting sequencer...");
     pthread_exit((void *)0);
 }
@@ -1124,15 +1139,15 @@ void *Service_1(void *threadp)
     double start_time_sec;	//To store start time in seconds
 	double stop_time_sec;	//To store end time in seconds
     
-	if((fc_exec_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((fc_exec_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("Frame Capture Execution Time:Malloc Failed\n");
 	}
-	if((fc_start_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((fc_start_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("Frame Capture Start Time:Malloc Failed\n");
 	}
-	if((fc_stop_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((fc_stop_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("Frame Capture Stop Time:Malloc Failed\n");
 	}
@@ -1175,26 +1190,92 @@ void *Service_1(void *threadp)
 }
 
 
-void *Service_2(void *threadp)
+void *Service_3(void *threadp)
 {
     //struct timeval current_time_val;
     struct timespec current_time_val;
     double current_time;
-    unsigned long long S2Cnt=0;
+    unsigned long long S3Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
     
     double start_time_sec;	//To store start time in seconds
 	double stop_time_sec;	//To store end time in seconds
     
-	if((pd_exec_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((pi_exec_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
+	{
+		printf("Process Image Execution Time:Malloc Failed\n");
+	}
+	if((pi_start_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
+	{
+		printf("Process Image Start Time:Malloc Failed\n");
+	}
+	if((pi_stop_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
+	{
+		printf("Process Image Stop Time:Malloc Failed\n");
+	}
+
+    //gettimeofday(&current_time_val, (struct timezone *)0);
+    //syslog(LOG_CRIT, "Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+    //printf("Frame Sampler thread @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+
+    while(!abortS3)
+    {
+        syslog(LOG_CRIT, "Inside while in Service 3");
+        //if(!abortS1)
+        //{
+            //syslog(LOG_CRIT, "Inside If S1Cnt");
+           // syslog(LOG_CRIT, "Taking sem");
+        sem_wait(&semS3);
+        //printf("-----------------S2Count = %d\n",S2Cnt);
+        //syslog(LOG_CRIT, "Entering mainloop");
+        
+        clock_gettime(CLOCK_REALTIME,&current_time_val);
+        /* Store start time in seconds */
+        start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+        *(pi_start_time + S3Cnt) = start_time_sec;
+        syslog(LOG_CRIT, "Frame Capture cycle %llu @ sec=%d\n", S3Cnt, (int)(start_time_sec));
+        
+        
+        	        
+        process_image(process_image_buffer.start,process_image_buffer.length);
+        //syslog(LOG_CRIT, "Incrementing S1Cnt");
+        
+
+        clock_gettime(CLOCK_REALTIME,&current_time_val);
+        //syslog(LOG_CRIT, "Frame Sampler release %llu @ sec=%d, msec=%d\n", S1Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
+        //}
+        stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
+        *(pi_stop_time + S3Cnt) = stop_time_sec;
+        S3Cnt++;
+        syslog(LOG_CRIT, "Process Image release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+        sem_post(&semS2);                
+    }
+    syslog(LOG_CRIT, "------------Exiting thread 3-------------");
+    abortS2=TRUE;
+    pthread_exit((void *)0);
+}
+
+
+void *Service_2(void *threadp)
+{
+    //struct timeval current_time_val;
+    struct timespec current_time_val;
+    double current_time;
+    unsigned long long S2Cnt=1;
+    threadParams_t *threadParams = (threadParams_t *)threadp;
+    
+    double start_time_sec;	//To store start time in seconds
+	double stop_time_sec;	//To store end time in seconds
+    
+	if((pd_exec_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("PPM Dump Execution Time:Malloc Failed\n");
 	}
-	if((pd_start_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((pd_start_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("PPM Dump Start Time:Malloc Failed\n");
 	}
-	if((pd_stop_time = (double *)malloc((frame_count)*sizeof(double))) == NULL)
+	if((pd_stop_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
 		printf("PPM Dump Stop Time:Malloc Failed\n");
 	}
@@ -1213,13 +1294,12 @@ void *Service_2(void *threadp)
         
 
         //syslog(LOG_CRIT, "PPM Dump cycle %llu @ sec=%d\n", S2Cnt, (int)(start_time_sec));
-        if(S2Cnt == 0 && frame_captured == true)
+        /*if(S2Cnt == 0 && frame_captured == true)
         {
                     clock_gettime(CLOCK_REALTIME,&current_time_val);
-        /* Store start time in seconds */
         start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
         *(pd_start_time + S2Cnt) = start_time_sec;
-            dump_ppm(image_frame[S2Cnt+1], global_size, (S2Cnt+1), &global_frame_time);
+            dump_ppm(image_frame[S2Cnt], global_size, (S2Cnt+1), &global_frame_time);
             //syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
             
             clock_gettime(CLOCK_REALTIME,&current_time_val);
@@ -1230,7 +1310,8 @@ void *Service_2(void *threadp)
             syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));
         
         }
-        else if(S2Cnt != 0)
+        else */
+        if(S2Cnt != 0)
         {
             //printf("S2Cnt = %llu",S2Cnt);
             //printf("((S2Cnt+1) % 60) = %llu",((S2Cnt+1) % 60));
@@ -1238,8 +1319,8 @@ void *Service_2(void *threadp)
         /* Store start time in seconds */
         start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
         *(pd_start_time + S2Cnt) = start_time_sec;
-            dump_ppm(image_frame[((S2Cnt+1) % 60)], global_size, (S2Cnt+1), &global_frame_time);
-            //syslog(LOG_CRIT, "Dumped image of count = %d", S2Cnt);
+            dump_ppm(image_frame[((S2Cnt) % 60)], global_size, (S2Cnt), &global_frame_time);
+            syslog(LOG_CRIT, "Dumped image of count = %d", ((S2Cnt) % 60));
             
             clock_gettime(CLOCK_REALTIME,&current_time_val);
             //syslog(LOG_CRIT, "After clock get time");
@@ -1256,6 +1337,148 @@ void *Service_2(void *threadp)
     syslog(LOG_CRIT, "----------------------Exiting thread 2--------------------");
 
     pthread_exit((void *)0);
+}
+
+void stabilize_device(void)
+{
+    struct timespec read_delay;
+    struct timespec time_error;
+    unsigned int count = 0;
+
+    read_delay.tv_sec=0;
+    read_delay.tv_nsec=30000;
+
+    while(count != 20)
+    {
+        fd_set fds;
+        struct timeval tv;
+        int r;
+
+        FD_ZERO(&fds);
+        FD_SET(fd, &fds);
+
+        /* Timeout. */
+        tv.tv_sec = 4;
+        tv.tv_usec = 0;
+
+        r = select(fd + 1, &fds, NULL, NULL, &tv);
+
+        if (-1 == r)
+        {
+            if (EINTR == errno);
+                //continue;
+            errno_exit("select");
+        }
+
+        if (0 == r)
+        {
+            fprintf(stderr, "select timeout\n");
+            exit(EXIT_FAILURE);
+        }
+
+    struct v4l2_buffer buf;
+    unsigned int i;
+
+    switch (io)
+    {
+
+        case IO_METHOD_READ:
+            //printf("Line 461 - IO_METHOD_READ\n");
+            if (-1 == read(fd, buffers[0].start, buffers[0].length))
+            {
+                switch (errno)
+                {
+
+                    //case EAGAIN:
+                      //  return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, see spec. */
+
+                        /* fall through */
+
+                    default:
+                        errno_exit("read");
+                }
+            }
+
+            process_image(buffers[0].start, buffers[0].length);
+            break;
+
+        case IO_METHOD_MMAP:
+        //printf("Line 484 - IO_METHOD_MMAP\n");
+            CLEAR(buf);
+
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_MMAP;
+
+            if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf))
+            {
+                switch (errno)
+                {
+                    //case EAGAIN:
+                      //  return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, but drivers should only set for serious errors, although some set for
+                           non-fatal errors too.
+                         */
+                        //return 0;
+
+
+                    default:
+                        printf("mmap failure\n");
+                        errno_exit("VIDIOC_DQBUF");
+                }
+            }
+
+            assert(buf.index < n_buffers);
+            
+            //process_image(buffers[buf.index].start, buf.bytesused);
+
+            if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                    errno_exit("VIDIOC_QBUF");
+            break;
+
+        case IO_METHOD_USERPTR:
+        //printf("Line 519 - IO_METHOD_USERPTR\n");
+            CLEAR(buf);
+
+            buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+            buf.memory = V4L2_MEMORY_USERPTR;
+
+            if (-1 == xioctl(fd, VIDIOC_DQBUF, &buf))
+            {
+                switch (errno)
+                {
+                    //case EAGAIN:
+                      //  return 0;
+
+                    case EIO:
+                        /* Could ignore EIO, see spec. */
+
+                        /* fall through */
+
+                    default:
+                        errno_exit("VIDIOC_DQBUF");
+                }
+            }
+
+            for (i = 0; i < n_buffers; ++i)
+                    if (buf.m.userptr == (unsigned long)buffers[i].start
+                        && buf.length == buffers[i].length)
+                            break;
+
+            assert(i < n_buffers);
+
+            process_image((void *)buf.m.userptr, buf.bytesused);
+
+            if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
+                    errno_exit("VIDIOC_QBUF");
+            break;
+        }
+        count++;
+    }
 }
 
 /* Main function */
@@ -1351,6 +1574,7 @@ int main(int argc, char **argv)
     open_device();
     init_device();
     start_capturing();
+    stabilize_device();
     
     // Create Service threads which will block awaiting release for:
     //
@@ -1373,12 +1597,25 @@ int main(int argc, char **argv)
     else
         printf("pthread_create successful for service 1\n");
         
+    // Service_3 = RT_MAX-2	@ 1 Hz
+    // Process Image
+        CPU_ZERO(&threadcpu);
+	CPU_SET(2, &threadcpu);
+    rc=pthread_attr_setaffinity_np(&rt_sched_attr[3], sizeof(cpu_set_t), &threadcpu);
+    rt_param[3].sched_priority=rt_max_prio-2;
+    pthread_attr_setschedparam(&rt_sched_attr[3], &rt_param[2]);
+    rc=pthread_create(&threads[3], &rt_sched_attr[3], Service_3, (void *)&(threadParams[3]));
+    if(rc < 0)
+        perror("pthread_create for service 2");
+    else
+        printf("pthread_create successful for service 2\n");        
+        
     // Service_2 = RT_MAX-2	@ 1 Hz
     // Dump PPM
         CPU_ZERO(&threadcpu);
-	CPU_SET(2, &threadcpu);
+	CPU_SET(3, &threadcpu);
     rc=pthread_attr_setaffinity_np(&rt_sched_attr[2], sizeof(cpu_set_t), &threadcpu);
-    rt_param[2].sched_priority=rt_max_prio-2;
+    rt_param[2].sched_priority=rt_max_prio-1;
     pthread_attr_setschedparam(&rt_sched_attr[2], &rt_param[2]);
     rc=pthread_create(&threads[2], &rt_sched_attr[2], Service_2, (void *)&(threadParams[2]));
     if(rc < 0)
@@ -1418,6 +1655,7 @@ int main(int argc, char **argv)
     sequencer_parameters();
     frame_capture_parameters();
     ppm_dump_parameters();
+    process_image_parameters();
     
     fprintf(stderr, "\n");
     //char str[] = "sh ./create_video.sh";
@@ -1550,6 +1788,44 @@ void ppm_dump_parameters(void)
     printf("Sample Jitter = %lf\n",sample_jitter);
     printf("Average Jitter = %lf\n",avg_jitter);
     printf("Deadline PPM dump = %lf\n",pd_deadline);
+}
+
+void process_image_parameters(void)
+{
+    double pi_wcet = 0;			//Store worst case execution for image capturing
+    double pi_total_time = 0;		//Store average execution time
+    double pi_jitter = 0;			//Store jitter for image capture
+    double pi_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    
+	printf("********************************Process Image PARAMETER ANALYSIS********************************\n");
+
+	/* Calculate execution time, WCET and average execution time */
+	for(int i=0;i < (frame_count-1) ;i++)
+	{
+		/* Calculate execution time of each iteration of sequencer (in secs) */
+		*(pi_exec_time + i) = (*(pi_stop_time + i) - *(pi_start_time + i))*MSEC_PER_SEC;
+
+		if(pi_wcet < *(pi_exec_time + i))
+		{
+			pi_wcet = *(pi_exec_time + i);
+		}
+
+		pi_total_time += *(pi_exec_time + i);
+	}
+    pi_deadline = (pi_total_time/frame_count) * 1.0;
+    sample_jitter = pi_wcet - pi_deadline;
+	for(int i=1; i< (frame_count-1) ;i++)
+	{
+        pi_jitter = (*(pi_start_time + i - 1) + speed_1fps.tv_sec) - (*(pi_start_time + i)) ;
+        avg_jitter += pi_jitter;	
+	}
+    avg_jitter /= (frame_count-1);
+	printf("WCET Process Image = %lf\n",pi_wcet);
+	printf("ACET Process Image = %lf\n",pi_total_time/(frame_count));
+    printf("Jitter = %lf\n",pi_jitter);
+    printf("Sample Jitter = %lf\n",sample_jitter);
+    printf("Average Jitter = %lf\n",avg_jitter);
+    printf("Deadline Process Image = %lf\n",pi_deadline);
 }
 
 /* References 
