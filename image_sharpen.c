@@ -97,14 +97,14 @@ struct buffer          process_image_buffer;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 11;
+static int              frame_count = 61;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
 
 FLOAT PSF[9] = {-K/8.0, -K/8.0, -K/8.0, -K/8.0, K+1.0, -K/8.0, -K/8.0, -K/8.0, -K/8.0};
 
-char ppm_header[]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n";
+char ppm_header[300]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n#Host Info:";
 char ppm_dumpname[]="test00000000.ppm";
 
 unsigned int framecnt=0;
@@ -256,66 +256,33 @@ static int xioctl(int fh, int request, void *arg)
 static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec *time)
 {
     int written, i, total, dumpfd;
-    char timestamp_call[150] = "sh ./timestamp.sh ";
-    char platform[50]="\0";
-    strcat(platform,hostname.sysname);
-    strcat(platform," ");
-    strcat(platform,hostname.nodename);
-
-    printf("\nPlatform - %s\n",platform);
    
     snprintf(&ppm_dumpname[4], 9, "%08d", tag);
     strncat(&ppm_dumpname[12], ".ppm", 5);
     dumpfd = open(ppm_dumpname, O_WRONLY | O_NONBLOCK | O_CREAT, 00666);
-    strcat(timestamp_call,ppm_dumpname);
-    //printf("\n---------Timestamp call is %s",timestamp_call);
-    strcat(timestamp_call," ");
-    strcat(timestamp_call,platform);
-    //printf("\n---------Timestamp call is %s",timestamp_call);
 
     snprintf(&ppm_header[4], 11, "%010d", (int)time->tv_sec);
     strncat(&ppm_header[14], " sec ", 5);
     snprintf(&ppm_header[19], 11, "%010d", (int)((time->tv_nsec)/1000000));
     strncat(&ppm_header[29], " msec \n"HRES_STR" "VRES_STR"\n255\n", 19);
+    strncat(&ppm_header[48], "Host Info: ", 11);
+    strncat(&ppm_header[59], hostname.sysname, strlen(hostname.sysname));
+    strncat(&ppm_header[59+strlen(hostname.sysname)], " Nodename: ", 11);
+    strncat(&ppm_header[59+strlen(hostname.sysname)+11], hostname.nodename, strlen(hostname.nodename));
+    strncat(&ppm_header[59+strlen(hostname.sysname)+11+strlen(hostname.nodename)], "\n", 1);
     written=write(dumpfd, ppm_header, sizeof(ppm_header));
 
     total=0;
-    //syslog(LOG_CRIT,"Before do while");
     do
     {
-        //syslog(LOG_CRIT,"Size value = %d", size);
         written=write(dumpfd, p, size);
-        //syslog(LOG_CRIT,"Written value = %d", written);
         total+=written;
-        //syslog(LOG_CRIT,"Total value = %d", total);
         syslog(LOG_CRIT,"Inside do while");
     } while(total < size);
-
-    printf("wrote %d bytes\n", total);
-    system(timestamp_call);
+    
     close(dumpfd);
-    frame_captured = false;
-    //syslog(LOG_CRIT, "In PPM DUMP Frame captured = %d",frame_captured);    
+    frame_captured = false;   
 }
-
-/* Function to convert from YUV into RGB 
-void yuv2rgb_float(float y, float u, float v, unsigned char *r, unsigned char *g, unsigned char *b)
-{
-    float r_temp, g_temp, b_temp;
-
-    // R = 1.164(Y-16) + 1.1596(V-128)
-    r_temp = 1.164*(y-16.0) + 1.1596*(v-128.0);  
-    *r = r_temp > 255.0 ? 255 : (r_temp < 0.0 ? 0 : (unsigned char)r_temp);
-
-    // G = 1.164(Y-16) - 0.813*(V-128) - 0.391*(U-128)
-    g_temp = 1.164*(y-16.0) - 0.813*(v-128.0) - 0.391*(u-128.0);
-    *g = g_temp > 255.0 ? 255 : (g_temp < 0.0 ? 0 : (unsigned char)g_temp);
-
-    // B = 1.164*(Y-16) + 2.018*(U-128)
-    b_temp = 1.164*(y-16.0) + 2.018*(u-128.0);
-    *b = b_temp > 255.0 ? 255 : (b_temp < 0.0 ? 0 : (unsigned char)b_temp);
-} */
-
 
 // This is probably the most acceptable conversion from camera YUYV to RGB
 //
@@ -605,7 +572,7 @@ static void start_capturing(void)
         case IO_METHOD_MMAP:
                 for (i = 0; i < n_buffers; ++i) 
                 {
-                        printf("allocated buffer %d\n", i);
+                        //printf("allocated buffer %d\n", i);
                         struct v4l2_buffer buf;
 
                         CLEAR(buf);
@@ -1090,7 +1057,9 @@ void *Sequencer(void *threadp)
         // Servcie_1 = RT_MAX-1	@ 1 Hz
         //if((seqCnt % 1) == 0) sem_post(&semS1);
         
-        sem_post(&semS1); sem_post(&semS3); 
+        if((seqCnt % 1) == 0) sem_post(&semS1); 
+        
+        if((seqCnt % 1) == 0) sem_post(&semS3); 
         
         //if(seqCnt > 2)
           //  sem_post(&semS2);
@@ -1106,6 +1075,7 @@ void *Sequencer(void *threadp)
 			
         *(seq_stop_time + seqCnt) = stop_time_sec;
         seqCnt++;
+        *(seq_exec_time + seqCnt) = stop_time_sec - start_time_sec;
         syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d\n", (int)(stop_time_sec));
         //syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
@@ -1182,6 +1152,7 @@ void *Service_1(void *threadp)
         //}
         stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
         *(fc_stop_time + S1Cnt) = stop_time_sec;
+        *(fc_exec_time + S1Cnt) = stop_time_sec - start_time_sec;
         S1Cnt++;
         syslog(LOG_CRIT, "Frame Capture release all sub-services @ sec=%d\n", (int)(stop_time_sec));                
     }
@@ -1247,6 +1218,7 @@ void *Service_3(void *threadp)
         stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
         *(pi_stop_time + S3Cnt) = stop_time_sec;
         S3Cnt++;
+        *(pi_exec_time + S3Cnt) = stop_time_sec - start_time_sec;
         syslog(LOG_CRIT, "Process Image release all sub-services @ sec=%d\n", (int)(stop_time_sec));
         sem_post(&semS2);                
     }
@@ -1311,8 +1283,8 @@ void *Service_2(void *threadp)
         
         }
         else */
-        if(S2Cnt != 0)
-        {
+        //if(S2Cnt != 0)
+        //{
             //printf("S2Cnt = %llu",S2Cnt);
             //printf("((S2Cnt+1) % 60) = %llu",((S2Cnt+1) % 60));
                     clock_gettime(CLOCK_REALTIME,&current_time_val);
@@ -1320,16 +1292,16 @@ void *Service_2(void *threadp)
         start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
         *(pd_start_time + S2Cnt) = start_time_sec;
             dump_ppm(image_frame[((S2Cnt) % 60)], global_size, (S2Cnt), &global_frame_time);
-            syslog(LOG_CRIT, "Dumped image of count = %d", ((S2Cnt) % 60));
-            
+            syslog(LOG_CRIT, "Dumped image of count = %d", ((S2Cnt) % 60));            
             clock_gettime(CLOCK_REALTIME,&current_time_val);
             //syslog(LOG_CRIT, "After clock get time");
             stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
             printf("---------------------------------------------Difference = %lf\n",(stop_time_sec-start_time_sec));			
             *(pd_stop_time + S2Cnt) = stop_time_sec;
             S2Cnt++;
-            syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));      
-        }
+            syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));  
+            *(pd_exec_time + S2Cnt) = stop_time_sec - start_time_sec;    
+        //}
         //syslog(LOG_CRIT, "S2Cnt inside while = %d and value = %d", S2Cnt, (int)(condition));
         //gettimeofday(&current_time_val, (struct timezone *)0);
         //syslog(LOG_CRIT, "Time-stamp with Image Analysis release %llu @ sec=%d, msec=%d\n", S2Cnt, (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
@@ -1503,30 +1475,29 @@ int main(int argc, char **argv)
         dev_name = "/dev/video0";
         
     uname(&hostname);
-    printf("\nVersion - %s",hostname.version);
-    printf("\Nodename - %s",hostname.nodename);
-    printf("\nMachine name - %s",hostname.machine);
-    printf("\nSystem name - %s\n",hostname.sysname);
+    printf("***************************Starting Time Lapse Project***************************\n");
+    printf("Host Platform Details:- \n");
+    printf("------------------------\n");
+    printf("Version - %s\n",hostname.version);
+    printf("Nodename - %s\n",hostname.nodename);
+    printf("Machine name - %s\n",hostname.machine);
+    printf("System name - %s\n",hostname.sysname);
     
-    printf("Starting Sequencer Demo\n");
     gettimeofday(&start_time_val, (struct timezone *)0);
     gettimeofday(&current_time_val, (struct timezone *)0);
     syslog(LOG_CRIT, "Sequencer @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
 
-   printf("System has %d processors configured and %d available.\n", get_nprocs_conf(), get_nprocs());
+    printf("System has %d processors configured and %d available.\n", get_nprocs_conf(), get_nprocs());
 
-   CPU_ZERO(&allcpuset);
+    CPU_ZERO(&allcpuset);
 
-   for(i=0; i < NUM_CPU_CORES; i++)
+    for(i=0; i < NUM_CPU_CORES; i++)
        CPU_SET(i, &allcpuset);
 
-   printf("Using CPUS=%d from total available.\n", CPU_COUNT(&allcpuset));
-
-
     // initialize the sequencer semaphores
-    //
     if (sem_init (&semS1, 0, 0)) { printf ("Failed to initialize S1 semaphore\n"); exit (-1); }
     if (sem_init (&semS2, 0, 0)) { printf ("Failed to initialize S2 semaphore\n"); exit (-1); }
+    if (sem_init (&semS3, 0, 0)) { printf ("Failed to initialize S3 semaphore\n"); exit (-1); }
 
     mainpid=getpid();
 
@@ -1537,8 +1508,8 @@ int main(int argc, char **argv)
     main_param.sched_priority=rt_max_prio;
     rc=sched_setscheduler(getpid(), SCHED_FIFO, &main_param);
     if(rc < 0) perror("main_param");
+    
     print_scheduler();
-
 
     pthread_attr_getscope(&main_attr, &scope);
 
@@ -1549,15 +1520,11 @@ int main(int argc, char **argv)
     else
       printf("PTHREAD SCOPE UNKNOWN\n");
 
-    printf("rt_max_prio=%d\n", rt_max_prio);
-    printf("rt_min_prio=%d\n", rt_min_prio);
-    
-        for(i=0; i < NUM_THREADS; i++)
+    //printf("rt_max_prio=%d\n", rt_max_prio);
+    //printf("rt_min_prio=%d\n", rt_min_prio);
+
+    for(i=0; i < NUM_THREADS; i++)
     {
-
-      //CPU_ZERO(&threadcpu);
-      //CPU_SET(3, &threadcpu);
-
       rc=pthread_attr_init(&rt_sched_attr[i]);
       rc=pthread_attr_setinheritsched(&rt_sched_attr[i], PTHREAD_EXPLICIT_SCHED);
       rc=pthread_attr_setschedpolicy(&rt_sched_attr[i], SCHED_FIFO);
@@ -1568,21 +1535,21 @@ int main(int argc, char **argv)
 
       threadParams[i].threadIdx=i;
     }
-   
-    printf("Service threads will run on %d CPU cores\n", CPU_COUNT(&threadcpu));
 
     open_device();
     init_device();
     start_capturing();
+    printf("\nSetting up the device...\n");
     stabilize_device();
     
-    // Create Service threads which will block awaiting release for:
-    //
+    usleep(10000);
 
-    // Servcie_1 = RT_MAX-1	@ 3 Hz
-    // For capturing images
+    // Create Service threads which will block awaiting release for:
+
+    // Servcie_1 = RT_MAX-1	@ 1 Hz
+    // For capturing frames
     CPU_ZERO(&threadcpu);
-	CPU_SET(2, &threadcpu);
+    CPU_SET(2, &threadcpu);
     rc=pthread_attr_setaffinity_np(&rt_sched_attr[1], sizeof(cpu_set_t), &threadcpu);
     rt_param[1].sched_priority=rt_max_prio-1;
     pthread_attr_setschedparam(&rt_sched_attr[1], &rt_param[1]);
@@ -1599,21 +1566,21 @@ int main(int argc, char **argv)
         
     // Service_3 = RT_MAX-2	@ 1 Hz
     // Process Image
-        CPU_ZERO(&threadcpu);
-	CPU_SET(2, &threadcpu);
+    CPU_ZERO(&threadcpu);
+    CPU_SET(2, &threadcpu);
     rc=pthread_attr_setaffinity_np(&rt_sched_attr[3], sizeof(cpu_set_t), &threadcpu);
     rt_param[3].sched_priority=rt_max_prio-2;
     pthread_attr_setschedparam(&rt_sched_attr[3], &rt_param[2]);
     rc=pthread_create(&threads[3], &rt_sched_attr[3], Service_3, (void *)&(threadParams[3]));
     if(rc < 0)
-        perror("pthread_create for service 2");
+        perror("pthread_create for service 3");
     else
-        printf("pthread_create successful for service 2\n");        
+        printf("pthread_create successful for service 3\n");        
         
-    // Service_2 = RT_MAX-2	@ 1 Hz
+    // Service_2 = RT_MAX-1	@ 1 Hz
     // Dump PPM
-        CPU_ZERO(&threadcpu);
-	CPU_SET(3, &threadcpu);
+    CPU_ZERO(&threadcpu);
+    CPU_SET(3, &threadcpu);
     rc=pthread_attr_setaffinity_np(&rt_sched_attr[2], sizeof(cpu_set_t), &threadcpu);
     rt_param[2].sched_priority=rt_max_prio-1;
     pthread_attr_setschedparam(&rt_sched_attr[2], &rt_param[2]);
@@ -1623,16 +1590,15 @@ int main(int argc, char **argv)
     else
         printf("pthread_create successful for service 2\n");
         
-    
-    // Create Sequencer thread, which like a cyclic executive, is highest prio
-    printf("Start sequencer\n");
-    syslog(LOG_CRIT,"------------------------START--------------------");
-    threadParams[0].sequencePeriods=900;
 
-    // Sequencer = RT_MAX	@ 30 Hz
+    // Create Sequencer thread, which like a cyclic executive, is highest priority
+    syslog(LOG_CRIT,"------------------------Starting Sequencer--------------------");
+    threadParams[0].sequencePeriods=frame_count;
+
+    // Sequencer = RT_MAX	@ 1 Hz
     //
-        CPU_ZERO(&threadcpu);
-	CPU_SET(2, &threadcpu);
+    CPU_ZERO(&threadcpu);
+    CPU_SET(2, &threadcpu);
     rc=pthread_attr_setaffinity_np(&rt_sched_attr[0], sizeof(cpu_set_t), &threadcpu);
     rt_param[0].sched_priority=rt_max_prio;
     pthread_attr_setschedparam(&rt_sched_attr[0], &rt_param[0]);
@@ -1642,11 +1608,10 @@ int main(int argc, char **argv)
     else
         printf("pthread_create successful for sequencer service 0\n");
 
-
-   for(i=0;i<NUM_THREADS;i++)
+    for(i = 0;i < NUM_THREADS;i++)
        pthread_join(threads[i], NULL);
 
-   printf("\nTEST COMPLETE\n");
+    printf("\nTEST COMPLETE\n");
         
     stop_capturing();
     uninit_device();
@@ -1665,145 +1630,118 @@ int main(int argc, char **argv)
 
 void sequencer_parameters(void)
 {
-    double seq_wcet = 0;			//Store worst case execution for image capturing
-    double seq_total_time = 0;		//Store average execution time
-    double seq_jitter = 0;			//Store jitter for image capture
-    double seq_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    double seq_wcet = 0;			 //Store worst case execution for Sequencer
+    double seq_total_time = 0;		//Store total execution time
+    double seq_jitter = 0;			//Store jitter for Sequencer
+    double avg_jitter = 0;
     
-	printf("********************************SEQUENCER PARAMETER ANALYSIS********************************\n");
+	printf("--------------------------------SEQUENCER PARAMETER ANALYSIS--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
 	for(int i=0;i < (frame_count) ;i++)
 	{
-		/* Calculate execution time of each iteration of sequencer (in secs) */
-		*(seq_exec_time + i) = (*(seq_stop_time + i) - *(seq_start_time + i))*MSEC_PER_SEC;
+		/* Calculate execution time of each iteration of Frame_Capture Thread (in msecs) */
+		*(seq_exec_time + i) = (*(seq_exec_time + i))*MSEC_PER_SEC;
 
 		if(seq_wcet < *(seq_exec_time + i))
 		{
 			seq_wcet = *(seq_exec_time + i);
 		}
 
-		/* Calculate total time of execution for image capture thread */
 		seq_total_time += *(seq_exec_time + i);
 	}
-    seq_deadline = (seq_total_time/frame_count) * 1.0;
-    sample_jitter = seq_wcet - seq_deadline;
-	for(int i=1; i< (frame_count) ;i++)
+	for(int i=1; i < (frame_count) ;i++)
 	{
         seq_jitter = (*(seq_start_time + i - 1) + speed_1fps.tv_sec) - (*(seq_start_time + i)) ;
         avg_jitter += seq_jitter;	
 	}
-    avg_jitter /= frame_count;
-	printf("WCET SEQUENCER = %lf\n",seq_wcet);
-	printf("ACET SEQUENCER = %lf\n",seq_total_time/(frame_count));
-    printf("Jitter = %lf\n",seq_jitter);
-    printf("Sample Jitter = %lf\n",sample_jitter);
-    printf("Average Jitter = %lf\n",avg_jitter);
-    printf("Deadline Sequencer = %lf\n",seq_deadline);
+    avg_jitter /= (frame_count);
+	printf("WCET Sequencer = %lf msec\n",seq_wcet);
+	printf("ACET Sequencer = %lf msec\n",seq_total_time/(frame_count));
+    printf("Average Jitter = %lf msec\n",avg_jitter);
 }
 
 void frame_capture_parameters(void)
 {
-    double fc_wcet = 0;			//Store worst case execution for image capturing
-    double fc_total_time = 0;		//Store average execution time
-    double fc_jitter = 0;			//Store jitter for image capture
-    double fc_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    double fc_wcet = 0;			    //Store worst case execution for frame capture
+    double fc_total_time = 0;		//Store total execution time
+    double fc_jitter = 0;			//Store jitter for frame capture
+    double avg_jitter = 0;
     
-	printf("********************************FRAME CAPTURE PARAMETER ANALYSIS********************************\n");
+	printf("--------------------------------FRAME CAPTURE PARAMETER ANALYSIS--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
-	for(int i=1;i < (frame_count) ;i++)
+	for(int i=0;i < (frame_count) ;i++)
 	{
-        //printf("Inside for loop\n");
-		/* Calculate execution time of each iteration of sequencer (in secs) */
-		*(fc_exec_time + i) = (*(fc_stop_time + i) - *(fc_start_time + i))*MSEC_PER_SEC;
+		/* Calculate execution time of each iteration of Frame_Capture Thread (in msecs) */
+		*(fc_exec_time + i) = (*(fc_exec_time + i))*MSEC_PER_SEC;
 
 		if(fc_wcet < *(fc_exec_time + i))
 		{
-            //printf("Inside if\n");
 			fc_wcet = *(fc_exec_time + i);
-            //printf("WCET = %lf for frame = %d\n",fc_wcet,i);
 		}
 
-		/* Calculate total time of execution for image capture thread */
 		fc_total_time += *(fc_exec_time + i);
 	}
-    fc_deadline = (fc_total_time/frame_count) * 1.0;
-    sample_jitter = fc_wcet - fc_deadline;
-	for(int i=1; i< (frame_count) ;i++)
+	for(int i=1; i < (frame_count) ;i++)
 	{
         fc_jitter = (*(fc_start_time + i - 1) + speed_1fps.tv_sec) - (*(fc_start_time + i)) ;
-        //printf("FC JItter = %lf & 1fps.tv = %lf\n",fc_jitter,(double)(speed_1fps.tv_sec));
         avg_jitter += fc_jitter;	
 	}
-    avg_jitter /= frame_count;
-	printf("WCET FRAME CAPTURE = %lf\n",fc_wcet);
-	printf("ACET FRAME CAPTURE = %lf\n",fc_total_time/(frame_count));
-    printf("Jitter = %lf\n",fc_jitter);
-    printf("Sample Jitter = %lf\n",sample_jitter);
-    printf("Average Jitter = %lf\n",avg_jitter);
-    printf("Deadline Frame Capture = %lf\n",fc_deadline);
+    avg_jitter /= (frame_count);
+	printf("WCET Frame Capture = %lf msec\n",fc_wcet);
+	printf("ACET Frame Capture = %lf msec\n",fc_total_time/(frame_count));
+    printf("Average Jitter = %lf msec\n",avg_jitter);
 }
 
 void ppm_dump_parameters(void)
 {
-    double pd_wcet = 0;			//Store worst case execution for image capturing
-    double pd_total_time = 0;		//Store average execution time
-    double pd_jitter = 0;			//Store jitter for image capture
-    double pd_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    double pd_wcet = 0;			    //Store worst case execution for ppm dump
+    double pd_total_time = 0;		//Store total execution time
+    double pd_jitter = 0;			//Store jitter for ppm dump
+    double avg_jitter = 0;
     
-	printf("********************************PPM DUMP PARAMETER ANALYSIS********************************\n");
+	printf("--------------------------------PPM DUMP PARAMETER ANALYSIS--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
-	for(int i=0;i < (frame_count-1) ;i++)
+	for(int i=0;i < (frame_count) ;i++)
 	{
-        //printf("Inside for\n");
-		/* Calculate execution time of each iteration of sequencer (in secs) */
-		*(pd_exec_time + i) = (*(pd_stop_time + i) - *(pd_start_time + i))*MSEC_PER_SEC;
-        //printf("Stop Time = %lf, start time = %lf for frame = %d\n",*(pd_stop_time+i),*(pd_start_time+i),i);
-        //printf("Execution time = %lf for frame = %d\n",*(pd_exec_time + i),i);
+		/* Calculate execution time of each iteration of PPM_Dump Thread (in msecs) */
+		*(pd_exec_time + i) = (*(pd_exec_time + i))*MSEC_PER_SEC;
 
 		if(pd_wcet < *(pd_exec_time + i))
 		{
-            //printf("Inside if\n");
 			pd_wcet = *(pd_exec_time + i);
-            //printf("WCET = %lf for frame = %d\n",pd_wcet,i);
+            syslog(LOG_CRIT,"pd_wcet = %lf for frame = %d",pd_wcet,i);
 		}
 
-		/* Calculate total time of execution for image capture thread */
 		pd_total_time += *(pd_exec_time + i);
 	}
-    pd_deadline = (pd_total_time/frame_count) * 1.0;
-    sample_jitter = pd_wcet - pd_deadline;
-	for(int i=1; i< (frame_count-1) ;i++)
+	for(int i=2; i < (frame_count) ;i++)
 	{
         pd_jitter = (*(pd_start_time + i - 1) + speed_1fps.tv_sec) - (*(pd_start_time + i)) ;
-        //printf("PD JItter = %lf & 1fps.tv = %lf\n",pd_jitter,(double)(speed_1fps.tv_sec));
         avg_jitter += pd_jitter;	
 	}
-    avg_jitter /= (frame_count-1);
-	printf("WCET PPM DUMP = %lf\n",pd_wcet);
-	printf("ACET PPM DUMP = %lf\n",pd_total_time/(frame_count));
-    printf("Jitter = %lf\n",pd_jitter);
-    printf("Sample Jitter = %lf\n",sample_jitter);
-    printf("Average Jitter = %lf\n",avg_jitter);
-    printf("Deadline PPM dump = %lf\n",pd_deadline);
+    avg_jitter /= (frame_count);
+	printf("WCET PPM Dump = %lf msec\n",pd_wcet);
+	printf("ACET PPM Dump = %lf msec\n",pd_total_time/(frame_count));
+    printf("Average Jitter = %lf msec\n",avg_jitter);                                                         
 }
 
 void process_image_parameters(void)
 {
-    double pi_wcet = 0;			//Store worst case execution for image capturing
-    double pi_total_time = 0;		//Store average execution time
-    double pi_jitter = 0;			//Store jitter for image capture
-    double pi_deadline = 0, sample_jitter = 0, avg_jitter = 0;
+    double pi_wcet = 0;			    //Store worst case execution for processing image
+    double pi_total_time = 0;		//Store total execution time
+    double pi_jitter = 0;			//Store jitter for processing image
+    double avg_jitter = 0;
     
-	printf("********************************Process Image PARAMETER ANALYSIS********************************\n");
+	printf("--------------------------------Process Image PARAMETER ANALYSIS--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
-	for(int i=0;i < (frame_count-1) ;i++)
+	for(int i=0;i < (frame_count) ;i++)
 	{
-		/* Calculate execution time of each iteration of sequencer (in secs) */
-		*(pi_exec_time + i) = (*(pi_stop_time + i) - *(pi_start_time + i))*MSEC_PER_SEC;
+		/* Calculate execution time of each iteration of Process_Image Thread (in msecs) */
+		*(pi_exec_time + i) = (*(pi_exec_time + i))*MSEC_PER_SEC;
 
 		if(pi_wcet < *(pi_exec_time + i))
 		{
@@ -1812,20 +1750,15 @@ void process_image_parameters(void)
 
 		pi_total_time += *(pi_exec_time + i);
 	}
-    pi_deadline = (pi_total_time/frame_count) * 1.0;
-    sample_jitter = pi_wcet - pi_deadline;
-	for(int i=1; i< (frame_count-1) ;i++)
+	for(int i=1; i< (frame_count) ;i++)
 	{
         pi_jitter = (*(pi_start_time + i - 1) + speed_1fps.tv_sec) - (*(pi_start_time + i)) ;
         avg_jitter += pi_jitter;	
 	}
-    avg_jitter /= (frame_count-1);
-	printf("WCET Process Image = %lf\n",pi_wcet);
-	printf("ACET Process Image = %lf\n",pi_total_time/(frame_count));
-    printf("Jitter = %lf\n",pi_jitter);
-    printf("Sample Jitter = %lf\n",sample_jitter);
-    printf("Average Jitter = %lf\n",avg_jitter);
-    printf("Deadline Process Image = %lf\n",pi_deadline);
+    avg_jitter /= (frame_count);
+	printf("WCET Process Image = %lf msec\n",pi_wcet);
+	printf("ACET Process Image = %lf msec\n",pi_total_time/(frame_count));
+    printf("Average Jitter = %lf msec\n",avg_jitter);
 }
 
 /* References 
