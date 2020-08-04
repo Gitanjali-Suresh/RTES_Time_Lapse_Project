@@ -17,7 +17,6 @@ all:	image_sharpen
 clean:
 	-rm -f *.o *.d
 	-rm -f *.ppm
-	-rm -f *.mp4
 	-rm -f image_sharpen
 
 distclean:
