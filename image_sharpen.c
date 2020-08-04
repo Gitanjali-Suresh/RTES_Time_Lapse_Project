@@ -80,7 +80,8 @@ double *pi_exec_time;	    //Process Image execution time
 double *pi_start_time;		//Process Image start time
 double *pi_stop_time;		//Process Image stop time 
 
-struct timespec speed_1fps = {1,0};
+//struct timespec speed_1fps = {1,0};
+struct timespec speed_1fps = {0,100000000};
 
 enum io_method 
 {
@@ -97,7 +98,7 @@ struct buffer           process_image_buffer;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 1801;
+static int              frame_count = 101;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
@@ -895,7 +896,8 @@ void *Sequencer(void *threadp)
     //struct timeval current_time_val;
     struct timespec current_time_val;
     //struct timespec delay_time = {0,33333333}; // delay for 33.33 msec, 30 Hz
-    struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
+    //struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
+    struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
     struct timespec remaining_time;
     double current_time;
     double residual;
