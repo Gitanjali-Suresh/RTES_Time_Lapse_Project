@@ -98,7 +98,7 @@ struct buffer           process_image_buffer;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 101;
+static int              frame_count = 601;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
