@@ -7,22 +7,22 @@ CFLAGS= -O0 -g $(INCLUDE_DIRS) $(CDEFS)
 LIBS= -lrt -lpthread
 
 HFILES= 
-CFILES= image_sharpen.c
+CFILES= time_lapse.c
 
 SRCS= ${HFILES} ${CFILES}
 OBJS= ${CFILES:.c=.o}
 
-all:	image_sharpen
+all:	time_lapse
 
 clean:
 	-rm -f *.o *.d
 	-rm -f *.ppm
-	-rm -f image_sharpen
+	-rm -f time_lapse
 
 distclean:
 	-rm -f *.o *.d
 
-image_sharpen: ${OBJS}
+time_lapse: ${OBJS}
 	$(CC) $(LDFLAGS) $(CFLAGS) -o $@ $@.o $(LIBS)
 
 depend:

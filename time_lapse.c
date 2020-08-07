@@ -98,12 +98,12 @@ struct buffer           process_image_buffer;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 601;
+static int              frame_count = 901;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
 
-char ppm_header[69]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n#Host Info:raspberrypi\n";
+char ppm_header[75]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n#Host Info:raspberrypi\n";
 char ppm_dumpname[]="test00000000.ppm";
 
 unsigned int framecnt=0;
@@ -248,7 +248,7 @@ void yuv2rgb(int y, int u, int v, unsigned char *r, unsigned char *g, unsigned c
    *b = b1 ;
 }
 
-
+bool check_PI = false;
 /* Function to carry out various image processing operations */
 static void process_image(const void *p, int size)
 {
@@ -258,7 +258,13 @@ static void process_image(const void *p, int size)
     unsigned char *pptr = (unsigned char *)p;
 
     // record when process was called
-    clock_gettime(CLOCK_REALTIME, &frame_time);    
+    clock_gettime(CLOCK_REALTIME, &frame_time); 
+    
+    if(framecnt == 15 && check_PI == false)
+    {
+        framecnt = 0;
+        check_PI = true;
+    }   
 
     framecnt++;
     printf("-------------frame %d: ", framecnt);
@@ -777,14 +783,6 @@ static void init_device(void)
         // This one work for Logitech C200
         fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
 
-        //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
-        //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_VYUY;
-
-        // Would be nice if camera supported
-        //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_GREY;
-        //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_RGB24;
-
-        //fmt.fmt.pix.field       = V4L2_FIELD_INTERLACED;
         fmt.fmt.pix.field       = V4L2_FIELD_NONE;
 
         if (-1 == xioctl(fd, VIDIOC_S_FMT, &fmt))
@@ -893,7 +891,6 @@ long_options[] = {
 
 void *Sequencer(void *threadp)
 {
-    //struct timeval current_time_val;
     struct timespec current_time_val;
     //struct timespec delay_time = {0,33333333}; // delay for 33.33 msec, 30 Hz
     //struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
@@ -904,6 +901,7 @@ void *Sequencer(void *threadp)
     int rc, delay_cnt=0;
     unsigned long long seqCnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    bool check = false;
     
 	double start_time_sec;	
 	double stop_time_sec;	
@@ -956,16 +954,13 @@ void *Sequencer(void *threadp)
 
 
         if(((seq_start_time + seqCnt) >= seq_start_time) && ((seq_start_time + seqCnt) <= (seq_start_time + (frame_count))))
-        {
-            //syslog(LOG_INFO,"[SEQUENCER]: Valid Address");
-            //printf("Valid Data Address\n");
+        {         
             *(seq_start_time + seqCnt) = start_time_sec; 
         }
         
-        //gettimeofday(&current_time_val, (struct timezone *)0);
+        
         syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d\n", seqCnt, (int)(start_time_sec));
 
-        //syslog(LOG_CRIT, "Sequencer thread prior to delay @ sec=%d, msec=%d\n", (int)(current_time_val.tv_sec-start_time_val.tv_sec), (int)current_time_val.tv_usec/USEC_PER_MSEC);
         if(delay_cnt > 1) printf("Sequencer looping delay %d\n", delay_cnt);
 
 
@@ -980,35 +975,35 @@ void *Sequencer(void *threadp)
         stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
 			
         *(seq_stop_time + seqCnt) = stop_time_sec;
-        seqCnt++;
         *(seq_exec_time + seqCnt) = stop_time_sec - start_time_sec;
         syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+        seqCnt++;
+         
+        if(seqCnt == 15 && check == false)
+        {
+            seqCnt = 0;
+            check = true;
+        }
 
     } while(!abortTest && (seqCnt < (frame_count)));
 
-    syslog(LOG_CRIT, "Outside sequencer while");
     sem_post(&semS1); 
-    syslog(LOG_CRIT, "Released S1 sem");
     sem_post(&semS3); 
-    syslog(LOG_CRIT, "Released S3 sem");
     abortS1=TRUE; 
-    syslog(LOG_CRIT, "Aborted S1");
     abortS3=TRUE; 
-    syslog(LOG_CRIT, "Aborted S3");
-    syslog(LOG_CRIT, "Exiting sequencer...");
     pthread_exit((void *)0);
 }
 
 void *Service_1(void *threadp)
 {
-    //struct timeval current_time_val;
     struct timespec current_time_val;
     double current_time;
     unsigned long long S1Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    bool check_S1 = false;
     
-    double start_time_sec;	//To store start time in seconds
-	double stop_time_sec;	//To store end time in seconds
+    double start_time_sec;	
+	double stop_time_sec;	
     
 	if((fc_exec_time = (double *)malloc((frame_count+10)*sizeof(double))) == NULL)
 	{
@@ -1040,7 +1035,12 @@ void *Service_1(void *threadp)
         *(fc_stop_time + S1Cnt) = stop_time_sec;
         *(fc_exec_time + S1Cnt) = stop_time_sec - start_time_sec;
         S1Cnt++;
-        syslog(LOG_CRIT, "Frame Capture release all sub-services @ sec=%d\n", (int)(stop_time_sec));                
+        syslog(LOG_CRIT, "Frame Capture release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+        if(S1Cnt == 15 && check_S1 == false)
+        {
+            S1Cnt = 0;
+            check_S1 = true;
+        }                
     }
     syslog(LOG_CRIT, "Exiting thread 1");
     pthread_exit((void *)0);
@@ -1049,11 +1049,11 @@ void *Service_1(void *threadp)
 
 void *Service_3(void *threadp)
 {
-    //struct timeval current_time_val;
     struct timespec current_time_val;
     double current_time;
     unsigned long long S3Cnt=0;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    bool check_S3 = false;
     
     double start_time_sec;	
 	double stop_time_sec;	
@@ -1086,10 +1086,16 @@ void *Service_3(void *threadp)
         clock_gettime(CLOCK_REALTIME,&current_time_val);
         stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
         *(pi_stop_time + S3Cnt) = stop_time_sec;
-        S3Cnt++;
         *(pi_exec_time + S3Cnt) = stop_time_sec - start_time_sec;
         syslog(LOG_CRIT, "Process Image release all sub-services @ sec=%d\n", (int)(stop_time_sec));
-        sem_post(&semS2);                
+        S3Cnt++;
+        if(S3Cnt == 15 && check_S3 == false)
+        {
+            S3Cnt = 0;
+            check_S3 = true;
+        }
+        else
+            sem_post(&semS2);                
     }
     syslog(LOG_CRIT, "------------Exiting thread 3-------------");
     abortS2=TRUE;
@@ -1099,11 +1105,11 @@ void *Service_3(void *threadp)
 /* Service to dump the ppm images */
 void *Service_2(void *threadp)
 {
-    //struct timeval current_time_val;
     struct timespec current_time_val;
     double current_time;
     unsigned long long S2Cnt=1;
     threadParams_t *threadParams = (threadParams_t *)threadp;
+    bool check_S2 = false;
     
     double start_time_sec;	
 	double stop_time_sec;	
@@ -1135,11 +1141,16 @@ void *Service_2(void *threadp)
                    
         clock_gettime(CLOCK_REALTIME,&current_time_val);
         stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
-        //printf("---------------------------------------------Difference = %lf\n",(stop_time_sec-start_time_sec));			
+        
         *(pd_stop_time + S2Cnt) = stop_time_sec;
-        S2Cnt++;
         syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));  
         *(pd_exec_time + S2Cnt) = stop_time_sec - start_time_sec;    
+        S2Cnt++;
+        if(S2Cnt == 15 && check_S2 == false)
+        {
+            S2Cnt = 1;
+            check_S2 = true;
+        }
     }
     syslog(LOG_CRIT, "----------------------Exiting thread 2--------------------");
 
@@ -1175,7 +1186,6 @@ void stabilize_device(void)
         if (-1 == r)
         {
             if (EINTR == errno);
-                //continue;
             errno_exit("select");
         }
 
@@ -1210,8 +1220,6 @@ void stabilize_device(void)
         }
 
         assert(buf.index < n_buffers);
-        
-        //process_image(buffers[buf.index].start, buf.bytesused);
 
         if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
                 errno_exit("VIDIOC_QBUF");
@@ -1401,7 +1409,7 @@ void sequencer_parameters(void)
     double seq_jitter = 0;			//Store jitter for Sequencer
     double avg_jitter = 0;
     
-	printf("--------------------------------SEQUENCER PARAMETER ANALYSIS--------------------------------\n");
+	printf("--------------------------------Sequencer Parameter Analysis--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
 	for(int i=0;i < (frame_count) ;i++)
@@ -1434,7 +1442,7 @@ void frame_capture_parameters(void)
     double fc_jitter = 0;			//Store jitter for frame capture
     double avg_jitter = 0;
     
-	printf("--------------------------------FRAME CAPTURE PARAMETER ANALYSIS--------------------------------\n");
+	printf("--------------------------------Frame Capture Parameter Analysis--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
 	for(int i=0;i < (frame_count) ;i++)
@@ -1467,7 +1475,7 @@ void ppm_dump_parameters(void)
     double pd_jitter = 0;			//Store jitter for ppm dump
     double avg_jitter = 0;
     
-	printf("--------------------------------PPM DUMP PARAMETER ANALYSIS--------------------------------\n");
+	printf("--------------------------------Ppm Dump Parameter Analysis--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
 	for(int i=0;i < (frame_count) ;i++)
@@ -1501,7 +1509,7 @@ void process_image_parameters(void)
     double pi_jitter = 0;			//Store jitter for processing image
     double avg_jitter = 0;
     
-	printf("--------------------------------Process Image PARAMETER ANALYSIS--------------------------------\n");
+	printf("--------------------------------Process Image Parameter Analysis--------------------------------\n");
 
 	/* Calculate execution time, WCET and average execution time */
 	for(int i=0;i < (frame_count) ;i++)
