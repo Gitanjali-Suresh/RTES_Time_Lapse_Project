@@ -1317,32 +1317,33 @@ int main(int argc, char **argv)
         frame_count = atoi(argv[1]) + 1;
         if(atoi(argv[2]) == 1)
         {
-            printf("High frequency operation selected at 10 Hz for a frame count of %d.\n",atoi(argv[1]));
+            printf("\nHigh frequency operation selected at 10 Hz for a frame count of %d.\n\n",atoi(argv[1]));
             freq_high = true;
         }
         else if(atoi(argv[2]) == 0)
         {
-            printf("Low frequency operation selected at 1 Hz for a frame count of %d.\n",atoi(argv[1]));
+            printf("\nLow frequency operation selected at 1 Hz for a frame count of %d.\n\n",atoi(argv[1]));
             freq_high = false;
         }
         else
         {
-            printf("Wrong Choice! Exiting!\n");
-            printf("Arg[1] = %s and arg[2] = %s\n",argv[1],argv[2]);
-            exit(0);
+            printf("\nWrong Choice! Exiting!\n\n");
+            printf("USAGE: [./<exe name> ] [ <frame_count> ] [ <1> (High Frequency) | <0> (Low Frequency) ] \n");
+            exit(-1);            
         }
     }
     else if(argc == 2)
     {
         frame_count = atoi(argv[1]) + 1;
-        printf("Assumed Low frequency operation at 1 Hz");
+        printf("\nAssumed Low frequency operation at 1 Hz with a frame count of %d.\n\n",atoi(argv[1]));
         freq_high = false;
     }
     else
     {
-        printf("Assuming a frame count of 100\n");
+        printf("\nUSAGE: [./<exe name> ] [ <frame_count> ] [ <1> (High Frequency) | <0> (Low Frequency) ] \n");
+        printf("\nAssuming a frame count of 100\n");
         frame_count = 101;
-        printf("Assumed Low frequency operation at 1 Hz");
+        printf("\nAssumed Low frequency operation at 1 Hz\n\n");
         freq_high = false;
     }
         
@@ -1408,10 +1409,12 @@ int main(int argc, char **argv)
     open_device();
     init_device();
     start_capturing();
-    printf("\nSetting up the device...\n");
-    stabilize_device();
-    
-    usleep(10000);
+    printf("\nSetting up the device...\n\n");
+    if (freq_high == true)
+    {
+        stabilize_device();
+        usleep(10000);
+    }
 
     // Create Service threads which will block awaiting release for:
 
