@@ -35,14 +35,13 @@
 
 /* Macro declarations */
 #define CLEAR(x) memset(&(x), 0, sizeof(x))
-#define COLOR_CONVERT
 #define HRES 640
 #define VRES 480
 #define HRES_STR "640"
 #define VRES_STR "480"
 #define IMG_HEIGHT (480)
 #define IMG_WIDTH (640)
-#define K 4.0
+#define INITIAL_FRAMES (15)
 
 #define USEC_PER_MSEC (1000)
 #define NANOSEC_PER_SEC (1000000000)
@@ -80,8 +79,7 @@ double *pi_exec_time;	    //Process Image execution time
 double *pi_start_time;		//Process Image start time
 double *pi_stop_time;		//Process Image stop time 
 
-//struct timespec speed_1fps = {1,0};
-struct timespec speed_1fps = {0,100000000};
+bool freq_high;
 
 enum io_method 
 {
@@ -98,12 +96,12 @@ struct buffer           process_image_buffer;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
-static int              frame_count = 901;
+static int              frame_count;
 
 typedef double FLOAT;
 typedef unsigned char UINT8;
 
-char ppm_header[75]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n#Host Info:raspberrypi\n";
+char ppm_header[]="P6\n#9999999999 sec 9999999999 msec \n"HRES_STR" "VRES_STR"\n255\n#Host Info:raspberrypi\n";
 char ppm_dumpname[]="test00000000.ppm";
 
 unsigned int framecnt=0;
@@ -187,12 +185,8 @@ static void dump_ppm(const void *p, int size, unsigned int tag, struct timespec 
     strncat(&ppm_header[29], " msec \n"HRES_STR" "VRES_STR"\n255\n", 19);
     strncat(&ppm_header[48], "#Host Info:", 11);
     strncat(&ppm_header[59], hostname.nodename, strlen(hostname.nodename));
-    strncat(&ppm_header[59+strlen(hostname.nodename)], "\n", 1);
-    /*strncat(&ppm_header[48], "Host Info: ", 11);
-    strncat(&ppm_header[59], hostname.sysname, strlen(hostname.sysname));
-    strncat(&ppm_header[59+strlen(hostname.sysname)], " Nodename: ", 11);
-    strncat(&ppm_header[59+strlen(hostname.sysname)+11], hostname.nodename, strlen(hostname.nodename));
-    strncat(&ppm_header[59+strlen(hostname.sysname)+11+strlen(hostname.nodename)], "\n", 1);*/
+    strncat(&ppm_header[59+strlen(hostname.nodename)], "\n", 1); 
+    
     written=write(dumpfd, ppm_header, sizeof(ppm_header));
 
     total=0;
@@ -260,14 +254,14 @@ static void process_image(const void *p, int size)
     // record when process was called
     clock_gettime(CLOCK_REALTIME, &frame_time); 
     
-    if(framecnt == 15 && check_PI == false)
+    if(framecnt == INITIAL_FRAMES && check_PI == false)
     {
         framecnt = 0;
         check_PI = true;
     }   
 
     framecnt++;
-    printf("-------------frame %d: ", framecnt);
+    //printf("-------------frame %d: ", framecnt);
 
     // This just dumps the frame to a file now, but you could replace with whatever image
     // processing you wish.
@@ -276,7 +270,7 @@ static void process_image(const void *p, int size)
     {
 
 //#if defined(COLOR_CONVERT)
-        printf("Dump YUYV converted to RGB size %d\n", size);
+        //printf("Dump YUYV converted to RGB size %d\n", size);
        
         // Pixels are YU and YV alternating, so YUYV which is 4 bytes
         // We want RGB, so RGBRGB which is 6 bytes
@@ -309,7 +303,6 @@ static void process_image(const void *p, int size)
     }
 
     fflush(stderr);
-    //fprintf(stderr, ".");
     fflush(stdout);
 }
 
@@ -891,10 +884,7 @@ long_options[] = {
 
 void *Sequencer(void *threadp)
 {
-    struct timespec current_time_val;
-    //struct timespec delay_time = {0,33333333}; // delay for 33.33 msec, 30 Hz
-    //struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
-    struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
+    struct timespec current_time_val;        
     struct timespec remaining_time;
     double current_time;
     double residual;
@@ -919,73 +909,151 @@ void *Sequencer(void *threadp)
 		printf("Sequencer Stop Time:Malloc Failed\n");
 	} 
 
-    do
+    if(freq_high == true)
     {
-        delay_cnt=0; residual=0.0;
+        struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
         
         do
         {
-            rc=nanosleep(&delay_time, &remaining_time);
-
-            if(rc == EINTR)
-            { 
-                residual = remaining_time.tv_sec + ((double)remaining_time.tv_nsec / (double)NANOSEC_PER_SEC);
-
-                if(residual > 0.0) printf("residual=%lf, sec=%d, nsec=%d\n", residual, (int)remaining_time.tv_sec, (int)remaining_time.tv_nsec);
- 
-                delay_cnt++;
-            }
-            else if(rc < 0)
+            delay_cnt=0; residual=0.0;
+            
+            do
             {
-                perror("Sequencer nanosleep");
-                exit(-1);
+                rc=nanosleep(&delay_time, &remaining_time);
+
+                if(rc == EINTR)
+                { 
+                    residual = remaining_time.tv_sec + ((double)remaining_time.tv_nsec / (double)NANOSEC_PER_SEC);
+
+                    if(residual > 0.0) printf("residual=%lf, sec=%d, nsec=%d\n", residual, (int)remaining_time.tv_sec, (int)remaining_time.tv_nsec);
+     
+                    delay_cnt++;
+                }
+                else if(rc < 0)
+                {
+                    perror("Sequencer nanosleep");
+                    exit(-1);
+                }
+               
+            } while((residual > 0.0) && (delay_cnt < 100));
+
+            if (check == true)
+                printf("Sequence Count = %llu\n",seqCnt);
+            
+            /* Calculate Start time */
+            clock_gettime(CLOCK_REALTIME,&current_time_val);
+
+            /* Store start time in seconds */
+            start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+
+
+            if(((seq_start_time + seqCnt) >= seq_start_time) && ((seq_start_time + seqCnt) <= (seq_start_time + (frame_count))))
+            {         
+                *(seq_start_time + seqCnt) = start_time_sec; 
             }
-           
-        } while((residual > 0.0) && (delay_cnt < 100));
+            
+            
+            syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d\n", seqCnt, (int)(start_time_sec));
 
-        
-        printf("--------Sequence Count = %llu\n",seqCnt);
-        
-        /* Calculate Start time */
-        clock_gettime(CLOCK_REALTIME,&current_time_val);
-
-        /* Store start time in seconds */
-        start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+            if(delay_cnt > 1) printf("Sequencer looping delay %d\n", delay_cnt);
 
 
-        if(((seq_start_time + seqCnt) >= seq_start_time) && ((seq_start_time + seqCnt) <= (seq_start_time + (frame_count))))
-        {         
-            *(seq_start_time + seqCnt) = start_time_sec; 
-        }
-        
-        
-        syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d\n", seqCnt, (int)(start_time_sec));
+            // Release each service at a sub-rate of the generic sequencer rate
+            
+            if((seqCnt % 1) == 0) sem_post(&semS1); 
+            
+            if((seqCnt % 1) == 0) sem_post(&semS3);       
+          
+            clock_gettime(CLOCK_REALTIME,&current_time_val);
+            
+            stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+                
+            *(seq_stop_time + seqCnt) = stop_time_sec;
+            *(seq_exec_time + seqCnt) = stop_time_sec - start_time_sec;
+            syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+            seqCnt++;
+             
+            if(seqCnt == INITIAL_FRAMES && check == false)
+            {
+                seqCnt = 0;
+                check = true;
+            }
 
-        if(delay_cnt > 1) printf("Sequencer looping delay %d\n", delay_cnt);
-
-
-        // Release each service at a sub-rate of the generic sequencer rate
+        } while(!abortTest && (seqCnt < (frame_count)));
+    }
+    else
+    {
+        struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
         
-        if((seqCnt % 1) == 0) sem_post(&semS1); 
-        
-        if((seqCnt % 1) == 0) sem_post(&semS3);       
-      
-        clock_gettime(CLOCK_REALTIME,&current_time_val);
-        
-        stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
-			
-        *(seq_stop_time + seqCnt) = stop_time_sec;
-        *(seq_exec_time + seqCnt) = stop_time_sec - start_time_sec;
-        syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d\n", (int)(stop_time_sec));
-        seqCnt++;
-         
-        if(seqCnt == 15 && check == false)
+        do
         {
-            seqCnt = 0;
-            check = true;
-        }
+            delay_cnt=0; residual=0.0;
+            
+            do
+            {
+                rc=nanosleep(&delay_time, &remaining_time);
 
-    } while(!abortTest && (seqCnt < (frame_count)));
+                if(rc == EINTR)
+                { 
+                    residual = remaining_time.tv_sec + ((double)remaining_time.tv_nsec / (double)NANOSEC_PER_SEC);
+
+                    if(residual > 0.0) printf("residual=%lf, sec=%d, nsec=%d\n", residual, (int)remaining_time.tv_sec, (int)remaining_time.tv_nsec);
+     
+                    delay_cnt++;
+                }
+                else if(rc < 0)
+                {
+                    perror("Sequencer nanosleep");
+                    exit(-1);
+                }
+               
+            } while((residual > 0.0) && (delay_cnt < 100));
+
+            
+            if (check == true)
+                printf("Sequence Count = %llu\n",seqCnt);
+            
+            /* Calculate Start time */
+            clock_gettime(CLOCK_REALTIME,&current_time_val);
+
+            /* Store start time in seconds */
+            start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+
+
+            if(((seq_start_time + seqCnt) >= seq_start_time) && ((seq_start_time + seqCnt) <= (seq_start_time + (frame_count))))
+            {         
+                *(seq_start_time + seqCnt) = start_time_sec; 
+            }
+            
+            
+            syslog(LOG_CRIT, "Sequencer cycle %llu @ sec=%d\n", seqCnt, (int)(start_time_sec));
+
+            if(delay_cnt > 1) printf("Sequencer looping delay %d\n", delay_cnt);
+
+
+            // Release each service at a sub-rate of the generic sequencer rate
+            
+            if((seqCnt % 1) == 0) sem_post(&semS1); 
+            
+            if((seqCnt % 1) == 0) sem_post(&semS3);       
+          
+            clock_gettime(CLOCK_REALTIME,&current_time_val);
+            
+            stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
+                
+            *(seq_stop_time + seqCnt) = stop_time_sec;
+            *(seq_exec_time + seqCnt) = stop_time_sec - start_time_sec;
+            syslog(LOG_CRIT, "Sequencer release all sub-services @ sec=%d\n", (int)(stop_time_sec));
+            seqCnt++;
+             
+            if(seqCnt == INITIAL_FRAMES && check == false)
+            {
+                seqCnt = 0;
+                check = true;
+            }
+
+        } while(!abortTest && (seqCnt < (frame_count)));
+    }
 
     sem_post(&semS1); 
     sem_post(&semS3); 
@@ -994,6 +1062,7 @@ void *Sequencer(void *threadp)
     pthread_exit((void *)0);
 }
 
+/* Service to capture the frames */
 void *Service_1(void *threadp)
 {
     struct timespec current_time_val;
@@ -1023,7 +1092,6 @@ void *Service_1(void *threadp)
         sem_wait(&semS1);
         
         clock_gettime(CLOCK_REALTIME,&current_time_val);
-        /* Store start time in seconds */
         start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
         *(fc_start_time + S1Cnt) = start_time_sec;
         syslog(LOG_CRIT, "Frame Capture cycle %llu @ sec=%d\n", S1Cnt, (int)(start_time_sec));
@@ -1036,17 +1104,17 @@ void *Service_1(void *threadp)
         *(fc_exec_time + S1Cnt) = stop_time_sec - start_time_sec;
         S1Cnt++;
         syslog(LOG_CRIT, "Frame Capture release all sub-services @ sec=%d\n", (int)(stop_time_sec));
-        if(S1Cnt == 15 && check_S1 == false)
+        if(S1Cnt == INITIAL_FRAMES && check_S1 == false)
         {
             S1Cnt = 0;
             check_S1 = true;
-        }                
+        }               
     }
     syslog(LOG_CRIT, "Exiting thread 1");
     pthread_exit((void *)0);
 }
 
-
+/* Service to process the images */
 void *Service_3(void *threadp)
 {
     struct timespec current_time_val;
@@ -1076,7 +1144,6 @@ void *Service_3(void *threadp)
         sem_wait(&semS3);
         
         clock_gettime(CLOCK_REALTIME,&current_time_val);
-        /* Store start time in seconds */
         start_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));
         *(pi_start_time + S3Cnt) = start_time_sec;
         syslog(LOG_CRIT, "Process Image cycle %llu @ sec=%d\n", S3Cnt, (int)(start_time_sec));     
@@ -1089,7 +1156,7 @@ void *Service_3(void *threadp)
         *(pi_exec_time + S3Cnt) = stop_time_sec - start_time_sec;
         syslog(LOG_CRIT, "Process Image release all sub-services @ sec=%d\n", (int)(stop_time_sec));
         S3Cnt++;
-        if(S3Cnt == 15 && check_S3 == false)
+        if(S3Cnt == INITIAL_FRAMES && check_S3 == false)
         {
             S3Cnt = 0;
             check_S3 = true;
@@ -1138,6 +1205,7 @@ void *Service_2(void *threadp)
         
         dump_ppm(image_frame[((S2Cnt) % 60)], global_size, (S2Cnt), &global_frame_time);
         syslog(LOG_CRIT, "Dumped image of count = %d", ((S2Cnt) % 60)); 
+        //printf("-----Dumped image of count = %llu\n", (S2Cnt));
                    
         clock_gettime(CLOCK_REALTIME,&current_time_val);
         stop_time_sec = ((double)current_time_val.tv_sec + (double)((current_time_val.tv_nsec)/(double)1000000000));			
@@ -1146,11 +1214,11 @@ void *Service_2(void *threadp)
         syslog(LOG_CRIT, "PPM Dump release all sub-services @ sec=%d\n", (int)(stop_time_sec));  
         *(pd_exec_time + S2Cnt) = stop_time_sec - start_time_sec;    
         S2Cnt++;
-        if(S2Cnt == 15 && check_S2 == false)
+        if(S2Cnt == INITIAL_FRAMES && check_S2 == false)
         {
             S2Cnt = 1;
             check_S2 = true;
-        }
+        } 
     }
     syslog(LOG_CRIT, "----------------------Exiting thread 2--------------------");
 
@@ -1242,11 +1310,41 @@ int main(int argc, char **argv)
     pthread_attr_t main_attr;
     pid_t mainpid;
     cpu_set_t allcpuset;
+    dev_name = "/dev/video0";
     
-    if(argc > 1)
-        dev_name = argv[1];
+    if(argc == 3)
+    {
+        frame_count = atoi(argv[1]) + 1;
+        if(atoi(argv[2]) == 1)
+        {
+            printf("High frequency operation selected at 10 Hz for a frame count of %d.\n",atoi(argv[1]));
+            freq_high = true;
+        }
+        else if(atoi(argv[2]) == 0)
+        {
+            printf("Low frequency operation selected at 1 Hz for a frame count of %d.\n",atoi(argv[1]));
+            freq_high = false;
+        }
+        else
+        {
+            printf("Wrong Choice! Exiting!\n");
+            printf("Arg[1] = %s and arg[2] = %s\n",argv[1],argv[2]);
+            exit(0);
+        }
+    }
+    else if(argc == 2)
+    {
+        frame_count = atoi(argv[1]) + 1;
+        printf("Assumed Low frequency operation at 1 Hz");
+        freq_high = false;
+    }
     else
-        dev_name = "/dev/video0";
+    {
+        printf("Assuming a frame count of 100\n");
+        frame_count = 101;
+        printf("Assumed Low frequency operation at 1 Hz");
+        freq_high = false;
+    }
         
     uname(&hostname);
     printf("***************************Starting Time Lapse Project***************************\n");
@@ -1294,9 +1392,6 @@ int main(int argc, char **argv)
     else
       printf("PTHREAD SCOPE UNKNOWN\n");
 
-    //printf("rt_max_prio=%d\n", rt_max_prio);
-    //printf("rt_min_prio=%d\n", rt_min_prio);
-
     for(i=0; i < NUM_THREADS; i++)
     {
       rc=pthread_attr_init(&rt_sched_attr[i]);
@@ -1336,7 +1431,7 @@ int main(int argc, char **argv)
     if(rc < 0)
         perror("pthread_create for service 1");
     else
-        printf("pthread_create successful for service 1\n");
+        syslog(LOG_INFO, "pthread_create successful for service 1\n");
         
     // Service_3 = RT_MAX-2	@ 1 Hz
     // Process Image
@@ -1349,7 +1444,7 @@ int main(int argc, char **argv)
     if(rc < 0)
         perror("pthread_create for service 3");
     else
-        printf("pthread_create successful for service 3\n");        
+        syslog(LOG_INFO, "pthread_create successful for service 3\n");        
         
     // Service_2 = RT_MAX-1	@ 1 Hz
     // Dump PPM
@@ -1362,7 +1457,7 @@ int main(int argc, char **argv)
     if(rc < 0)
         perror("pthread_create for service 2");
     else
-        printf("pthread_create successful for service 2\n");
+        syslog(LOG_INFO, "pthread_create successful for service 2\n");
         
 
     // Create Sequencer thread, which like a cyclic executive, is highest priority
@@ -1380,12 +1475,14 @@ int main(int argc, char **argv)
     if(rc < 0)
         perror("pthread_create for sequencer service 0");
     else
-        printf("pthread_create successful for sequencer service 0\n");
+        syslog(LOG_INFO, "pthread_create successful for sequencer service 0\n");
 
     for(i = 0;i < NUM_THREADS;i++)
        pthread_join(threads[i], NULL);
 
     printf("\nTEST COMPLETE\n");
+    
+    printf("\nAnalyzing...\n");
         
     stop_capturing();
     uninit_device();
@@ -1397,8 +1494,6 @@ int main(int argc, char **argv)
     process_image_parameters();
     
     fprintf(stderr, "\n");
-    //char str[] = "sh ./create_video.sh";
-    //system(str);
     return 0;
 }
 
@@ -1424,11 +1519,24 @@ void sequencer_parameters(void)
 
 		seq_total_time += *(seq_exec_time + i);
 	}
-	for(int i=1; i < (frame_count) ;i++)
-	{
-        seq_jitter = (*(seq_start_time + i - 1) + speed_1fps.tv_sec) - (*(seq_start_time + i)) ;
-        avg_jitter += seq_jitter;	
-	}
+    if(freq_high == true)
+    {
+        struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
+        for(int i=1; i < (frame_count) ;i++)
+        {
+            seq_jitter = (*(seq_start_time + i - 1) + delay_time.tv_sec) - (*(seq_start_time + i)) ;
+            avg_jitter += seq_jitter;	
+        }
+    }
+    else
+    {
+        struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
+        for(int i=1; i < (frame_count) ;i++)
+        {
+            seq_jitter = (*(seq_start_time + i - 1) + delay_time.tv_sec) - (*(seq_start_time + i)) ;
+            avg_jitter += seq_jitter;	
+        }
+    }
     avg_jitter /= (frame_count);
 	printf("WCET Sequencer = %lf msec\n",seq_wcet);
 	printf("ACET Sequencer = %lf msec\n",seq_total_time/(frame_count));
@@ -1457,11 +1565,24 @@ void frame_capture_parameters(void)
 
 		fc_total_time += *(fc_exec_time + i);
 	}
-	for(int i=1; i < (frame_count) ;i++)
-	{
-        fc_jitter = (*(fc_start_time + i - 1) + speed_1fps.tv_sec) - (*(fc_start_time + i)) ;
-        avg_jitter += fc_jitter;	
-	}
+    if(freq_high == true)
+    {
+        struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
+        for(int i=1; i < (frame_count) ;i++)
+        {
+            fc_jitter = (*(fc_start_time + i - 1) + delay_time.tv_sec) - (*(fc_start_time + i)) ;
+            avg_jitter += fc_jitter;	
+        }
+    }
+    else
+    {
+        struct timespec delay_time = {1, 0}; // delay for 1s, 1 Hz
+        for(int i=1; i < (frame_count) ;i++)
+        {
+            fc_jitter = (*(fc_start_time + i - 1) + delay_time.tv_sec) - (*(fc_start_time + i)) ;
+            avg_jitter += fc_jitter;	
+        }
+    }
     avg_jitter /= (frame_count);
 	printf("WCET Frame Capture = %lf msec\n",fc_wcet);
 	printf("ACET Frame Capture = %lf msec\n",fc_total_time/(frame_count));
@@ -1491,11 +1612,24 @@ void ppm_dump_parameters(void)
 
 		pd_total_time += *(pd_exec_time + i);
 	}
-	for(int i=2; i < (frame_count) ;i++)
-	{
-        pd_jitter = (*(pd_start_time + i - 1) + speed_1fps.tv_sec) - (*(pd_start_time + i)) ;
-        avg_jitter += pd_jitter;	
-	}
+    if(freq_high == true)
+    {
+        struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
+        for(int i=2; i < (frame_count) ;i++)
+        {
+            pd_jitter = (*(pd_start_time + i - 1) + delay_time.tv_sec) - (*(pd_start_time + i)) ;
+            avg_jitter += pd_jitter;	
+        }
+    }
+    else
+    {
+        struct timespec delay_time = {1, 0}; // delay for 1s, 1 Hz
+        for(int i=2; i < (frame_count) ;i++)
+        {
+            pd_jitter = (*(pd_start_time + i - 1) + delay_time.tv_sec) - (*(pd_start_time + i)) ;
+            avg_jitter += pd_jitter;	
+        }
+    }
     avg_jitter /= (frame_count);
 	printf("WCET PPM Dump = %lf msec\n",pd_wcet);
 	printf("ACET PPM Dump = %lf msec\n",pd_total_time/(frame_count));
@@ -1524,11 +1658,24 @@ void process_image_parameters(void)
 
 		pi_total_time += *(pi_exec_time + i);
 	}
-	for(int i=1; i< (frame_count) ;i++)
-	{
-        pi_jitter = (*(pi_start_time + i - 1) + speed_1fps.tv_sec) - (*(pi_start_time + i)) ;
-        avg_jitter += pi_jitter;	
-	}
+    if (freq_high == true)
+    {
+        struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
+        for(int i=1; i< (frame_count) ;i++)
+        {
+            pi_jitter = (*(pi_start_time + i - 1) + delay_time.tv_sec) - (*(pi_start_time + i)) ;
+            avg_jitter += pi_jitter;	
+        }
+    }
+    else
+    {
+        struct timespec delay_time = {1, 0}; // delay for 1s, 1 Hz
+        for(int i=1; i< (frame_count) ;i++)
+        {
+            pi_jitter = (*(pi_start_time + i - 1) + delay_time.tv_sec) - (*(pi_start_time + i)) ;
+            avg_jitter += pi_jitter;	
+        }
+    }
     avg_jitter /= (frame_count);
 	printf("WCET Process Image = %lf msec\n",pi_wcet);
 	printf("ACET Process Image = %lf msec\n",pi_total_time/(frame_count));
