@@ -1,1 +1,3 @@
 # RTES_Time_Lapse_Project
+
+The project **Time Lapse Image Acquisition** aims to acquire real-time images to create a time-lapse video. The concepts learned throughout the course *ECEN 5623: Real Time Embedded Systems* are put to test in this project. </br></br> One of the main concepts that has been covered in-depth during the course Rate Monotonic Algorithm, is being emulated in this project. An implementation involving hard real-time services is also covered.</br></br> The entire project has been developed on Raspberry Pi 3b board with Linux as the operating system using C as the development language. The images were captured using a standard resolution USB camera by Logitech series C270.
