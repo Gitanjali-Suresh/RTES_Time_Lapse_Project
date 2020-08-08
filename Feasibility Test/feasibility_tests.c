@@ -20,10 +20,10 @@ U32_T ex0_period[] = {1000, 1000, 1000};
 U32_T ex0_wcet[] = {1, 1, 169};
 
 // U=0.9857
-/*U32_T ex1_period[] = {2, 5, 7};
-U32_T ex1_wcet[] = {1, 1, 2};
+U32_T ex1_period[] = {100, 100, 100};
+U32_T ex1_wcet[] = {1, 1, 83};
 
-
+/*
 /* Function Prototype Declarations */
 int completion_time_feasibility(U32_T numServices, U32_T period[], U32_T wcet[], U32_T deadline[]);
 int scheduling_point_feasibility(U32_T numServices, U32_T period[], U32_T wcet[], U32_T deadline[]);
@@ -44,13 +44,13 @@ int main(void)
     else
         printf("INFEASIBLE\n");
 
-    /*printf("Ex-1 U=%4.2f (C1=1, C2=1, C3=2; T1=2, T2=5, T3=7; T=D): ", 
-		   ((1.0/2.0) + (1.0/5.0) + (2.0/7.0)));
+    printf("Ex-1 U=%4.2f (C1=1, C2=1, C3=83; T1=100, T2=100, T3=100; T=D): ", 
+		   ((1.0/100.0) + (1.0/100.0) + (83.0/100.0)));
 	numServices = sizeof(ex1_period)/sizeof(U32_T);
     if(completion_time_feasibility(numServices, ex1_period, ex1_wcet, ex1_period) == TRUE)
         printf("FEASIBLE\n");
     else
-        printf("INFEASIBLE\n"); */
+        printf("INFEASIBLE\n"); 
     
     printf("\n");
 	
@@ -62,7 +62,15 @@ int main(void)
     if(scheduling_point_feasibility(numServices, ex0_period, ex0_wcet, ex0_period) == TRUE)
         printf("FEASIBLE\n");
     else
-        printf("INFEASIBLE\n");        
+        printf("INFEASIBLE\n");    
+        
+    printf("Ex-1 U=%4.2f (C1=1, C2=1, C3=83; T1=100, T2=100, T3=100; T=D): ",
+		   ((1.0/100.0) + (1.0/100.0) + (83.0/100.0)));
+	numServices = sizeof(ex0_period)/sizeof(U32_T);
+    if(scheduling_point_feasibility(numServices, ex0_period, ex0_wcet, ex0_period) == TRUE)
+        printf("FEASIBLE\n");
+    else
+        printf("INFEASIBLE\n");             
 	
 
 }

@@ -18,6 +18,7 @@ clean:
 	-rm -f *.o *.d
 	-rm -f *.ppm
 	-rm -f time_lapse
+	-rm -f *.csv
 
 distclean:
 	-rm -f *.o *.d

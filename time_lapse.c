@@ -2,10 +2,9 @@
 * Author - Gitanjali Suresh
 * Dated - 26 July 2020
 * About - This code generates real-time images obtained from a USB based webcam for creating a Time Lapse Video
-* Underlying references - The base code for obtaining real-time images is obtained from Dr. Sam Siewert's webpage in addition to referring to the 
-*			  sharpening image transformation.
+* Underlying references - The base code for obtaining real-time images is obtained from Dr. Sam Siewert's webpage.
 * Links - For obtaining real-time images V4L2 startup code - http://ecee.colorado.edu/~ecen5623/ecen/ex/Linux/computer-vision/simple-capture/
-*       - For sharpening the image - http://ecee.colorado.edu/~ecen5623/ecen/ex/Linux/computer-vision/sharpen-psf/sharpen.c
+*       - For sequencing the operation among different threads - http://ecee.colorado.edu/~ecen5623/ecen/ex/Linux/computer-vision/sharpen-psf/sharpen.c
 */
 
 /* Header File declarations */
@@ -79,7 +78,18 @@ double *pi_exec_time;	    //Process Image execution time
 double *pi_start_time;		//Process Image start time
 double *pi_stop_time;		//Process Image stop time 
 
-bool freq_high;
+bool freq_high;     //Variable to enable high or low frequency operation
+
+/* File related variables for dumping analysis into excel file */
+static FILE *fptr_seq;		//File pointer for sequencer parameter analysis
+static FILE *fptr_fc;		//File pointer for frame capture parameter analysis
+static FILE *fptr_pd;		//File pointer for ppm dump parameter analysis
+static FILE *fptr_pi;		//File pointer for process image parameter analysis
+
+char file_seq[] = "Sequencer_Analysis.csv";	        //Sequencer file name
+char file_fc[] = "Frame_Capture_Analysis.csv";		//Frame Capture file name
+char file_pd[] = "PPM_Dump_Analysis.csv";		    //PPM Dump file name
+char file_pi[]= "Process_Image_Analysis.csv";		//Process Image file name
 
 enum io_method 
 {
@@ -261,28 +271,18 @@ static void process_image(const void *p, int size)
     }   
 
     framecnt++;
-    //printf("-------------frame %d: ", framecnt);
 
     // This just dumps the frame to a file now, but you could replace with whatever image
     // processing you wish.
 
     if(fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV)
     {
-
-//#if defined(COLOR_CONVERT)
-        //printf("Dump YUYV converted to RGB size %d\n", size);
-       
-        // Pixels are YU and YV alternating, so YUYV which is 4 bytes
-        // We want RGB, so RGBRGB which is 6 bytes
-        //
         for(i=0, newi=0; i<size; i=i+4, newi=newi+6)
         {
             y_temp=(int)pptr[i]; u_temp=(int)pptr[i+1]; y2_temp=(int)pptr[i+2]; v_temp=(int)pptr[i+3];
             yuv2rgb(y_temp, u_temp, v_temp, &bigbuffer[newi], &bigbuffer[newi+1], &bigbuffer[newi+2]);
             yuv2rgb(y2_temp, u_temp, v_temp, &bigbuffer[newi+3], &bigbuffer[newi+4], &bigbuffer[newi+5]);
         }
-        //sharpen(bigbuffer, ((size*6)/4));
-        //dump_ppm(bigbuffer, ((size*6)/4), framecnt, &frame_time);
         global_size = (size*6)/4;
         global_frame_time = frame_time;
         frame_captured = true;
@@ -316,7 +316,6 @@ static int read_frame(void)
     {
 
         case IO_METHOD_READ:
-            //printf("Line 461 - IO_METHOD_READ\n");
             if (-1 == read(fd, buffers[0].start, buffers[0].length))
             {
                 switch (errno)
@@ -339,7 +338,6 @@ static int read_frame(void)
             break;
 
         case IO_METHOD_MMAP:
-        //printf("Line 484 - IO_METHOD_MMAP\n");
             CLEAR(buf);
 
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -377,7 +375,6 @@ static int read_frame(void)
             break;
 
         case IO_METHOD_USERPTR:
-        //printf("Line 519 - IO_METHOD_USERPTR\n");
             CLEAR(buf);
 
             buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -767,7 +764,7 @@ static void init_device(void)
 
     if (force_format)
     {
-        printf("FORCING FORMAT\n");
+        //printf("FORCING FORMAT\n");
         fmt.fmt.pix.width       = HRES;
         fmt.fmt.pix.height      = VRES;
 
@@ -1110,7 +1107,7 @@ void *Service_1(void *threadp)
             check_S1 = true;
         }               
     }
-    syslog(LOG_CRIT, "Exiting thread 1");
+    syslog(LOG_CRIT, "----------------Exiting thread 1----------------------");
     pthread_exit((void *)0);
 }
 
@@ -1355,6 +1352,7 @@ int main(int argc, char **argv)
     printf("Nodename - %s\n",hostname.nodename);
     printf("Machine name - %s\n",hostname.machine);
     printf("System name - %s\n",hostname.sysname);
+    printf("------------------------\n\n");
     
     gettimeofday(&start_time_val, (struct timezone *)0);
     gettimeofday(&current_time_val, (struct timezone *)0);
@@ -1398,7 +1396,6 @@ int main(int argc, char **argv)
       rc=pthread_attr_init(&rt_sched_attr[i]);
       rc=pthread_attr_setinheritsched(&rt_sched_attr[i], PTHREAD_EXPLICIT_SCHED);
       rc=pthread_attr_setschedpolicy(&rt_sched_attr[i], SCHED_FIFO);
-      //rc=pthread_attr_setaffinity_np(&rt_sched_attr[i], sizeof(cpu_set_t), &threadcpu);
 
       rt_param[i].sched_priority=rt_max_prio-i;
       pthread_attr_setschedparam(&rt_sched_attr[i], &rt_param[i]);
@@ -1493,19 +1490,22 @@ int main(int argc, char **argv)
     
     sequencer_parameters();
     frame_capture_parameters();
-    //ppm_dump_parameters();
     process_image_parameters();
     
     fprintf(stderr, "\n");
     return 0;
 }
 
+/* Function to analyze the real-time parameters for sequencer thread */
 void sequencer_parameters(void)
 {
     double seq_wcet = 0;			 //Store worst case execution for Sequencer
     double seq_total_time = 0;		//Store total execution time
     double seq_jitter = 0;			//Store jitter for Sequencer
     double avg_jitter = 0;
+    
+    fptr_seq = fopen(file_seq,"w+");
+	fprintf(fptr_seq,"Sequencer Count,Start_Time(in sec),Stop_Time(in sec),Execution_Time(in msec),Jitter(in msec)");
     
 	printf("--------------------------------Sequencer Parameter Analysis--------------------------------\n");
 
@@ -1527,7 +1527,8 @@ void sequencer_parameters(void)
         struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
         for(int i=1; i < (frame_count) ;i++)
         {
-            seq_jitter = (*(seq_start_time + i - 1) + delay_time.tv_sec) - (*(seq_start_time + i)) ;
+            seq_jitter = (*(seq_start_time + i - 1) + delay_time.tv_sec) - (*(seq_start_time + i));
+            fprintf(fptr_seq,"\n%d,%lf,%lf,%lf,%lf",i,*(seq_start_time + i),*(seq_stop_time + i),*(seq_exec_time + i),seq_jitter);
             avg_jitter += seq_jitter;	
         }
     }
@@ -1536,7 +1537,8 @@ void sequencer_parameters(void)
         struct timespec delay_time = {1,0}; // delay for 1s, 1 Hz
         for(int i=1; i < (frame_count) ;i++)
         {
-            seq_jitter = (*(seq_start_time + i - 1) + delay_time.tv_sec) - (*(seq_start_time + i)) ;
+            seq_jitter = (*(seq_start_time + i - 1) + delay_time.tv_sec) - (*(seq_start_time + i));
+            fprintf(fptr_seq,"\n%d,%lf,%lf,%lf,%lf",i,*(seq_start_time + i),*(seq_stop_time + i),*(seq_exec_time + i),seq_jitter);
             avg_jitter += seq_jitter;	
         }
     }
@@ -1546,12 +1548,16 @@ void sequencer_parameters(void)
     printf("Average Jitter = %lf msec\n",avg_jitter);
 }
 
+/* Function to analyze the real-time parameters for frame_capture thread ie., Service 1 */
 void frame_capture_parameters(void)
 {
     double fc_wcet = 0;			    //Store worst case execution for frame capture
     double fc_total_time = 0;		//Store total execution time
     double fc_jitter = 0;			//Store jitter for frame capture
     double avg_jitter = 0;
+    
+    fptr_fc = fopen(file_fc,"w+");
+	fprintf(fptr_fc,"Frame Capture Count,Start_Time(in sec),Stop_Time(in sec),Execution_Time(in msec),Jitter(in msec)");
     
 	printf("--------------------------------Frame Capture Parameter Analysis--------------------------------\n");
 
@@ -1573,7 +1579,8 @@ void frame_capture_parameters(void)
         struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
         for(int i=1; i < (frame_count) ;i++)
         {
-            fc_jitter = (*(fc_start_time + i - 1) + delay_time.tv_sec) - (*(fc_start_time + i)) ;
+            fc_jitter = (*(fc_start_time + i - 1) + delay_time.tv_sec) - (*(fc_start_time + i));
+            fprintf(fptr_fc,"\n%d,%lf,%lf,%lf,%lf",i,*(fc_start_time + i),*(fc_stop_time + i),*(fc_exec_time + i),fc_jitter);
             avg_jitter += fc_jitter;	
         }
     }
@@ -1582,7 +1589,8 @@ void frame_capture_parameters(void)
         struct timespec delay_time = {1, 0}; // delay for 1s, 1 Hz
         for(int i=1; i < (frame_count) ;i++)
         {
-            fc_jitter = (*(fc_start_time + i - 1) + delay_time.tv_sec) - (*(fc_start_time + i)) ;
+            fc_jitter = (*(fc_start_time + i - 1) + delay_time.tv_sec) - (*(fc_start_time + i));
+            fprintf(fptr_fc,"\n%d,%lf,%lf,%lf,%lf",i,*(fc_start_time + i),*(fc_stop_time + i),*(fc_exec_time + i),fc_jitter);
             avg_jitter += fc_jitter;	
         }
     }
@@ -1592,12 +1600,16 @@ void frame_capture_parameters(void)
     printf("Average Jitter = %lf msec\n",avg_jitter);
 }
 
+/* Function to analyze the real-time parameters for ppm_dump thread ie., Service 2 */
 void ppm_dump_parameters(void)
 {
     double pd_wcet = 0;			    //Store worst case execution for ppm dump
     double pd_total_time = 0;		//Store total execution time
     double pd_jitter = 0;			//Store jitter for ppm dump
     double avg_jitter = 0;
+    
+    fptr_pd = fopen(file_pd,"w+");
+	fprintf(fptr_pd,"PPM Dump Count,Start_Time(in sec),Stop_Time(in sec),Execution_Time(in msec),Jitter(in msec)");
     
 	printf("--------------------------------Ppm Dump Parameter Analysis--------------------------------\n");
 
@@ -1620,7 +1632,8 @@ void ppm_dump_parameters(void)
         struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
         for(int i=2; i < (frame_count) ;i++)
         {
-            pd_jitter = (*(pd_start_time + i - 1) + delay_time.tv_sec) - (*(pd_start_time + i)) ;
+            pd_jitter = (*(pd_start_time + i - 1) + delay_time.tv_sec) - (*(pd_start_time + i));
+            fprintf(fptr_pd,"\n%d,%lf,%lf,%lf,%lf",i,*(pd_start_time + i),*(pd_stop_time + i),*(pd_exec_time + i),pd_jitter);
             avg_jitter += pd_jitter;	
         }
     }
@@ -1629,7 +1642,8 @@ void ppm_dump_parameters(void)
         struct timespec delay_time = {1, 0}; // delay for 1s, 1 Hz
         for(int i=2; i < (frame_count) ;i++)
         {
-            pd_jitter = (*(pd_start_time + i - 1) + delay_time.tv_sec) - (*(pd_start_time + i)) ;
+            pd_jitter = (*(pd_start_time + i - 1) + delay_time.tv_sec) - (*(pd_start_time + i));
+            fprintf(fptr_pd,"\n%d,%lf,%lf,%lf,%lf",i,*(pd_start_time + i),*(pd_stop_time + i),*(pd_exec_time + i),pd_jitter);
             avg_jitter += pd_jitter;	
         }
     }
@@ -1639,12 +1653,16 @@ void ppm_dump_parameters(void)
     printf("Average Jitter = %lf msec\n",avg_jitter);                                                         
 }
 
+/* Function to analyze the real-time parameters for process_image thread ie., Service 3 */
 void process_image_parameters(void)
 {
     double pi_wcet = 0;			    //Store worst case execution for processing image
     double pi_total_time = 0;		//Store total execution time
     double pi_jitter = 0;			//Store jitter for processing image
     double avg_jitter = 0;
+    
+    fptr_pi = fopen(file_pi,"w+");
+	fprintf(fptr_pi,"Process Image Count,Start_Time(in sec),Stop_Time(in sec),Execution_Time(in msec),Jitter(in msec)");
     
 	printf("--------------------------------Process Image Parameter Analysis--------------------------------\n");
 
@@ -1666,7 +1684,8 @@ void process_image_parameters(void)
         struct timespec delay_time = {0,100000000}; // delay for 100ms, 10 Hz
         for(int i=1; i< (frame_count) ;i++)
         {
-            pi_jitter = (*(pi_start_time + i - 1) + delay_time.tv_sec) - (*(pi_start_time + i)) ;
+            pi_jitter = (*(pi_start_time + i - 1) + delay_time.tv_sec) - (*(pi_start_time + i));
+            fprintf(fptr_pi,"\n%d,%lf,%lf,%lf,%lf",i,*(pi_start_time + i),*(pi_stop_time + i),*(pi_exec_time + i),pi_jitter);
             avg_jitter += pi_jitter;	
         }
     }
@@ -1676,6 +1695,7 @@ void process_image_parameters(void)
         for(int i=1; i< (frame_count) ;i++)
         {
             pi_jitter = (*(pi_start_time + i - 1) + delay_time.tv_sec) - (*(pi_start_time + i)) ;
+            fprintf(fptr_pi,"\n%d,%lf,%lf,%lf,%lf",i,*(pi_start_time + i),*(pi_stop_time + i),*(pi_exec_time + i),pi_jitter);
             avg_jitter += pi_jitter;	
         }
     }
@@ -1687,5 +1707,5 @@ void process_image_parameters(void)
 
 /* References 
 * [1]	http://ecee.colorado.edu/~ecen5623/ecen/ex/Linux/computer-vision/simple-capture/
-* [2]	http://ecee.colorado.edu/~ecen5623/ecen/ex/Linux/computer-vision/sharpen-psf/sharpen.c
+* [2]	http://ecee.colorado.edu/~ecen5623/ecen/ex/Linux/computer-vision/sequencer-generic
 */
